@@ -15,6 +15,8 @@ import { z } from "zod";
 import type { Backend } from "./driver.js";
 import { MODEL, client, requestDefaults } from "./claude.js";
 import { runClaudeCode } from "./claude-code.js";
+import { parseAriaNode } from "./browser.js";
+import { maskDigits } from "./replay.js";
 
 export const MAP_FILE = "witness.map.yaml";
 
@@ -28,25 +30,30 @@ export interface CrawlPage {
   screenshot: string;
 }
 
-const CONTROL_ROLES =
-  "button|link|textbox|searchbox|checkbox|radio|switch|combobox|listbox|slider|spinbutton|tab|menuitem|option";
-const CONTROL_LINE = new RegExp(`^\\s*- (${CONTROL_ROLES})(?: ("(?:[^"\\\\]|\\\\.)*"))?`);
+const CONTROL_ROLES = new Set(
+  "button link textbox searchbox checkbox radio switch combobox listbox slider spinbutton tab menuitem option".split(" "),
+);
 
+/** Interactive controls on a page, e.g. button "Add". Numbers are masked (#) so live counts aren't drift. */
 export function controlsOf(aria: string): string[] {
   const out = new Set<string>();
   for (const line of aria.split("\n")) {
-    const m = line.match(CONTROL_LINE);
-    if (m) out.add(m[2] ? `${m[1]} ${m[2]}` : m[1]);
+    const node = parseAriaNode(line);
+    if (node && CONTROL_ROLES.has(node.role)) out.add(node.name ? `${node.role} ${JSON.stringify(maskDigits(node.name))}` : node.role);
   }
   return [...out];
 }
 
-export async function crawl(startUrl: string, outDir: string, maxPages = 20): Promise<CrawlPage[]> {
+export async function crawl(startUrl: string, outDir: string, maxPages = 20, storageState?: string): Promise<CrawlPage[]> {
   await mkdir(outDir, { recursive: true });
   const origin = new URL(startUrl).origin;
   const browser = await chromium.launch();
-  // A fresh context: the map describes the app as a new user first sees it.
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  // A fresh context, as a new user first sees the app, or signed in with a
+  // saved login (`witness auth`) so the crawl gets past the login page.
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    ...(storageState ? { storageState } : {}),
+  });
   const page = await context.newPage();
   const queue = [new URL(startUrl).pathname + new URL(startUrl).search];
   const seen = new Set(queue);
@@ -199,11 +206,12 @@ export async function buildMap(opts: {
   backend: Backend;
   workDir: string;
   runsDir: string;
+  storageState?: string;
   log?: (l: string) => void;
 }): Promise<FeatureMap> {
   const log = opts.log ?? (() => {});
   log(`  crawling ${opts.url}…`);
-  const pages = await crawl(opts.url, opts.workDir);
+  const pages = await crawl(opts.url, opts.workDir, 20, opts.storageState);
   log(`  found ${pages.length} page(s): ${pages.map((p) => p.path).join(", ")}`);
   const past = await lessons(opts.runsDir);
   log(`  describing features (${past.length} past run(s) as lessons) via ${opts.backend}…`);
@@ -245,8 +253,8 @@ export interface Drift {
   staleFeatures: { name: string; missing: string[] }[];
 }
 
-export async function checkMap(map: FeatureMap, url: string, workDir: string): Promise<Drift> {
-  const pages = await crawl(url, workDir);
+export async function checkMap(map: FeatureMap, url: string, workDir: string, storageState?: string): Promise<Drift> {
+  const pages = await crawl(url, workDir, 20, storageState);
   const now = new Map(pages.map((p) => [p.path, p]));
   const before = new Map(map.pages.map((p) => [p.path, p]));
   const drift: Drift = {

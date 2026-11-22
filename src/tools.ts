@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { BrowserSession } from "./browser.js";
+import { redact, resolveSecrets } from "./secrets.js";
 
 const ref = z.string().describe("Element ref from the latest snapshot, e.g. e12");
 
@@ -19,6 +20,20 @@ export const TOOL_SPECS = {
   type: {
     description: "Replace the contents of a text field. Set submit=true to press Enter afterwards.",
     shape: { ref, text: z.string(), submit: z.boolean() },
+  },
+  select_option: {
+    description: "Choose an option in a native <select> dropdown (role combobox/listbox), by its visible label.",
+    shape: { ref, option: z.string().describe("The option's visible label") },
+  },
+  click_at: {
+    description:
+      "Click at a point on the page, in CSS pixels from the top-left of the viewport (a screenshot uses the same coordinates). " +
+      "Use it only when there's no element to target, e.g. to click an empty area outside a menu or popover. Take a screenshot first to pick the point.",
+    shape: {
+      x: z.number().describe("Pixels from the left edge"),
+      y: z.number().describe("Pixels from the top edge"),
+      description: z.string().describe("What's at that point, in words"),
+    },
   },
   press: {
     description: "Press a keyboard key on the focused element, e.g. Enter, Escape, Tab.",
@@ -49,7 +64,8 @@ How to work:
 - Look for evidence, not just the happy path. If the goal involves persistence, reload. If it involves counts, read the count. If you add, delete or toggle something, check the result in the next snapshot.
 - If something doesn't behave as the goal describes, try once more a different way, then record what happened. Don't paper over it.
 - Every action is screenshotted and logged automatically for a reviewer.
-- Call finish when you're done. Your summary is a log of what you did and saw, not a verdict.`;
+- Call finish when you're done. Your summary is a log of what you did and saw, not a verdict.
+- Text like {{secret:PASSWORD}} is a secret placeholder. Type it exactly as written; Witness substitutes the real value, and you will only ever see the placeholder.`;
 
 export interface ToolOutcome {
   text?: string;
@@ -72,7 +88,7 @@ export async function runTool(
   const input = parsed.data as Record<string, any>;
 
   if (name === "finish") return { text: "Session ended.", isError: false, finish: input as FinishInput };
-  if (name === "snapshot") return { text: await session.snapshot(), isError: false };
+  if (name === "snapshot") return { text: redact(await session.snapshot()), isError: false };
   if (name === "screenshot") {
     const step = await session.act("screenshot", {}, async () => "Screenshot taken");
     log(`  #${step.index} screenshot`);
@@ -96,10 +112,18 @@ export async function runTool(
         return `Clicked ${input.element}`;
       case "type": {
         const el = page.locator(`aria-ref=${input.ref}`);
-        await el.fill(input.text);
+        await el.fill(resolveSecrets(input.text)); // the recorded input keeps the placeholder
         if (input.submit) await el.press("Enter");
         return `Typed ${JSON.stringify(input.text)}${input.submit ? " and pressed Enter" : ""}`;
       }
+      case "select_option": {
+        const el = page.locator(`aria-ref=${input.ref}`);
+        const picked = await el.selectOption({ label: input.option }).catch(() => el.selectOption(input.option));
+        return `Selected ${JSON.stringify(input.option)}${picked.length ? "" : " (no matching option)"}`;
+      }
+      case "click_at":
+        await page.mouse.click(input.x, input.y);
+        return `Clicked at (${input.x}, ${input.y}): ${input.description}`;
       case "press":
         await page.keyboard.press(input.key);
         return `Pressed ${input.key}`;

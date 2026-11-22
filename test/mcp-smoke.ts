@@ -37,7 +37,7 @@ try {
   );
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort().join(",");
-  expect(names === "witness_map,witness_replay,witness_replays,witness_verify", `tools: ${names}`);
+  expect(names === "witness_auth,witness_map,witness_replay,witness_replays,witness_verify", `tools: ${names}`);
   expect(Boolean(client.getInstructions()?.includes("before saying the work is done")), "server instructions tell agents when to verify");
 
   const empty = await client.callTool({ name: "witness_replays", arguments: {} });

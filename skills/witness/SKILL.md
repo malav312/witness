@@ -27,18 +27,21 @@ Don't use it for pure refactors with no behavior change (use `witness_replay` fo
 
    For a bug fix, the goal is the behavior that was broken.
 
-3. **Call `witness_verify`.** It takes about a minute.
+3. **Credentials and login.** Never write a real password, token or key in a goal. Write `{{secret:NAME}}` and ask the user to set `WITNESS_SECRET_NAME` or add `NAME=value` to `.witness/secrets.env`. Witness types the value and redacts it from everything it records. If the app needs a login, call `witness_auth` once ("Log in as {{secret:USER}} with password {{secret:PASSWORD}}"). After that, verify, replay and map all start signed in.
 
-4. **Act on the verdict.**
+4. **Call `witness_verify`.** It takes about a minute.
+
+5. **Act on the verdict.**
    - `pass`: done. Report the verdict and the evidence report path to the user. The run is saved as a replay automatically.
    - `fail`: not done. Read `problems` and the `not_met` criteria. They cite step numbers and usually point at the cause. Fix the code, then verify again with the same goal.
    - `inconclusive`: not done. Usually the goal was too vague or a criterion wasn't exercised. Make the goal more specific and verify again.
 
    Never describe a `fail` or `inconclusive` result as working. If you can't get to `pass`, tell the user what Witness found.
 
-5. **Before you finish, call `witness_replay`** to re-check previously verified behavior. It takes about a second per replay and needs no LLM. If one diverges:
+6. **Before you finish, call `witness_replay`** to re-check previously verified behavior. It takes about a second per replay and needs no LLM. If one diverges:
    - **You meant to change that UI:** call `witness_replay` with `heal: true`. It re-verifies, and re-records the replay if the goal still holds.
    - **You didn't mean to:** it's probably a regression. Look at the diff it shows.
+   - **It says "only numbers changed":** that's usually live data, such as counters or timestamps. `heal: true` re-verifies the goal and learns those lines, so they stop causing divergences.
 
 ## Feature Map
 

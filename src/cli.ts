@@ -9,11 +9,13 @@ import {
   loadReplays,
   replayFromRun,
   runReplay,
+  rerecord,
   saveReplay,
   toPlaywrightSpec,
   type ReplayResult,
 } from "./replay.js";
-import { newRunDir, runVerify, type VerifyOptions } from "./verify.js";
+import { AUTH_FILE, defaultStorageState, newRunDir, runVerify, type VerifyOptions } from "./verify.js";
+import { SECRETS_FILE } from "./secrets.js";
 import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
 
 const HELP = `witness: agents don't get to say "it works" without a witness.
@@ -25,7 +27,13 @@ Usage:
   witness export [name...] [--dir d]  Write replays as plain Playwright tests.
   witness map [--check]               Crawl the app into a Feature Map (${MAP_FILE}),
                                       or report drift from the saved one (no LLM).
+  witness auth "<login goal>"         Have the agent log in, and save the session to ${AUTH_FILE}.
+                                      Later runs start signed in.
   witness mcp                         Serve Witness as an MCP server on stdio, for coding agents.
+
+Secrets: write {{secret:NAME}} in a goal instead of a password or key. Set the value
+as WITNESS_SECRET_NAME or in ${SECRETS_FILE}. The agent never sees it, and every report,
+replay and log stores only the placeholder.
 
 Options:
   --url <url>         App to open (default: $WITNESS_URL or http://localhost:4173)
@@ -39,6 +47,7 @@ Options:
                       Still passing: re-record the replay. Failing: report a regression.
   --dir <dir>         export: output folder (default: tests/witness)
   --no-map            verify: don't give the Driver the Feature Map
+  --no-auth           Ignore the saved login in ${AUTH_FILE}
   --headed            Show the browser
   --json              Print results as JSON
 
@@ -57,6 +66,7 @@ async function options(values: Values): Promise<VerifyOptions & { json: boolean 
     outDir: String(values.out ?? ".witness/runs"),
     headed: Boolean(values.headed),
     map: values["no-map"] ? undefined : (await readMap())?.text,
+    storageState: values["no-auth"] ? undefined : defaultStorageState(),
     log: (line) => json || console.error(line),
     json,
   };
@@ -108,7 +118,7 @@ async function replay(names: string[], values: Values) {
   const results: (ReplayResult & { healed?: string; regression?: string })[] = [];
   for (const { replay: r } of replays) {
     const { runDir } = await newRunDir(opts.outDir, `-replay-${r.name}`);
-    const res = await runReplay(r, { url: opts.url, runDir, headed: opts.headed });
+    const res = await runReplay(r, { url: opts.url, runDir, headed: opts.headed, storageState: opts.storageState });
     const entry: (typeof results)[number] = { ...res };
     results.push(entry);
 
@@ -120,6 +130,9 @@ async function replay(names: string[], values: Values) {
     opts.log!(`✗ ${r.name}  diverged at step ${d.step} (${d.action}): ${d.reason}`);
     if (d.diff) opts.log!(d.diff.replace(/^/gm, "    "));
     opts.log!(`    evidence: ${rel(runDir)}`);
+    if (d.numbersOnly && !values.heal) {
+      opts.log!(`    Only numbers changed, which looks like live data. --heal re-verifies the goal and, if it holds, learns these lines as volatile.`);
+    }
 
     if (!values.heal) {
       worst = Math.max(worst, 1);
@@ -128,9 +141,14 @@ async function replay(names: string[], values: Values) {
     opts.log!(`  healing: re-verifying "${r.goal}" with the agent…`);
     const { report, runDir: verifyDir } = await runVerify(r.goal, opts);
     if (report.verdict.verdict === "pass") {
-      const file = await saveIfPassed(report, opts.log!);
+      const next = rerecord(r, report, d);
+      const file = "error" in next ? undefined : await saveReplay(next);
       entry.healed = file;
-      opts.log!(`  HEALED  The app changed, but the goal still holds. Replay re-recorded: ${file ? rel(file) : "(not saved)"}`);
+      const learned = "error" in next ? 0 : (next.volatile?.length ?? 0) - (r.volatile?.length ?? 0);
+      opts.log!(
+        `  HEALED  The app changed, but the goal still holds. Replay re-recorded: ${file ? rel(file) : "(not saved)"}` +
+          (learned > 0 ? `\n    learned ${learned} live-data line(s); numbers on them are ignored from now on` : ""),
+      );
     } else {
       entry.regression = verifyDir;
       worst = Math.max(worst, report.verdict.verdict === "fail" ? 1 : 2);
@@ -162,7 +180,7 @@ async function map(values: Values) {
   if (values.check) {
     const saved = await readMap();
     if (!saved) throw new Error(`No ${MAP_FILE} yet. Create one with: witness map`);
-    const d = await checkMap(saved.map, opts.url, runDir);
+    const d = await checkMap(saved.map, opts.url, runDir, opts.storageState);
     if (!hasDrift(d)) {
       console.log(`✓ ${MAP_FILE} matches the app (${saved.map.pages.length} pages, ${saved.map.features.length} features)`);
       return 0;
@@ -179,10 +197,28 @@ async function map(values: Values) {
     return 1;
   }
   console.error(`witness map › ${opts.url}`);
-  const m = await buildMap({ url: opts.url, backend: opts.backend, workDir: runDir, runsDir: opts.outDir, log: opts.log! });
+  const m = await buildMap({
+    url: opts.url, backend: opts.backend, workDir: runDir, runsDir: opts.outDir, storageState: opts.storageState, log: opts.log!,
+  });
   await writeMap(m);
   console.log(`\nwrote ${MAP_FILE}: ${m.pages.length} page(s), ${m.features.length} feature(s)`);
   for (const f of m.features) console.log(`  • ${f.name}  (${f.page})${f.traps.length ? `  · ${f.traps.length} trap(s)` : ""}`);
+  return 0;
+}
+
+async function auth(goal: string, values: Values) {
+  const opts = await options(values);
+  const { report, runDir } = await runVerify(
+    `${goal}\nThe goal is only to end up signed in. Once you are, call finish.`,
+    { ...opts, storageState: undefined, saveStateTo: AUTH_FILE },
+  );
+  printVerdict(report, runDir);
+  if (report.verdict.verdict !== "pass") {
+    console.log(`\nNot signed in, so nothing was saved.`);
+    return report.verdict.verdict === "fail" ? 1 : 2;
+  }
+  console.log(`\nSaved the login to ${AUTH_FILE}. verify, replay and map now start signed in (--no-auth to skip).`);
+  console.log(`It holds session cookies: keep it out of git. .witness/ is ignored by default.`);
   return 0;
 }
 
@@ -198,6 +234,7 @@ async function main() {
       heal: { type: "boolean" },
       dir: { type: "string" },
       "no-map": { type: "boolean" },
+      "no-auth": { type: "boolean" },
       check: { type: "boolean" },
       headed: { type: "boolean" },
       json: { type: "boolean" },
@@ -213,6 +250,7 @@ async function main() {
   if (command === "replay") return replay(rest, values);
   if (command === "export") return exportSpecs(rest, values);
   if (command === "map") return map(values);
+  if (command === "auth" && rest.length) return auth(rest.join(" "), values);
   if (command === "mcp") {
     const { serveMcp } = await import("./mcp-server.js");
     await serveMcp();

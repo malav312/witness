@@ -14,8 +14,9 @@ import { z } from "zod";
 import type { Backend } from "./driver.js";
 import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
 import type { RunReport } from "./report.js";
-import { loadReplays, replayFromRun, runReplay, saveReplay } from "./replay.js";
-import { newRunDir, runVerify } from "./verify.js";
+import { loadReplays, replayFromRun, rerecord, runReplay, saveReplay } from "./replay.js";
+import { SECRETS_FILE } from "./secrets.js";
+import { AUTH_FILE, defaultStorageState, newRunDir, runVerify } from "./verify.js";
 
 const OUT = ".witness/runs";
 const log = (line: string) => process.stderr.write(line + "\n");
@@ -59,7 +60,9 @@ export async function serveMcp() {
         "Witness proves that a web app actually does something by driving it in a real browser and judging the recorded evidence. " +
         "Use witness_verify after changing app behavior, before saying the work is done; a 'pass' is the evidence. " +
         "Use witness_replay to check earlier verified behavior still holds (fast, no LLM). " +
-        "The app must already be running; pass its url or set WITNESS_URL.",
+        "The app must already be running; pass its url or set WITNESS_URL. " +
+        "Never put real passwords or keys in a goal: write {{secret:NAME}} and have the user set WITNESS_SECRET_NAME. " +
+        "For apps behind a login, call witness_auth once; later runs start signed in.",
     },
   );
 
@@ -70,6 +73,7 @@ export async function serveMcp() {
       description:
         "Drive the running web app in a real browser to exercise a goal described in plain English, then have an independent judge decide pass/fail from the recorded evidence only (screenshots, accessibility trees, console errors, failed requests). " +
         "Write the goal as a user-visible outcome, including implied expectations, e.g. 'A user can add a task with the Add button and it is still there after reloading'. " +
+        `Refer to credentials as {{secret:NAME}} (values from WITNESS_SECRET_NAME or ${SECRETS_FILE}); they are typed for the agent and redacted everywhere. ` +
         "Takes about a minute. On pass, the run is saved as a replay. Treat 'fail' and 'inconclusive' as not done: read the problems, fix, and verify again.",
       inputSchema: {
         goal: z.string().describe("The user-visible behavior to prove"),
@@ -86,6 +90,7 @@ export async function serveMcp() {
           maxSteps: max_steps ?? 30,
           outDir: OUT,
           map: map?.text,
+          storageState: defaultStorageState(),
           log,
         });
         const replayFile = await savePass(report);
@@ -125,7 +130,7 @@ export async function serveMcp() {
         let regressions = 0;
         for (const { replay: r } of replays) {
           const { runDir } = await newRunDir(OUT, `-replay-${r.name}`);
-          const res = await runReplay(r, { url: urlOr(url), runDir });
+          const res = await runReplay(r, { url: urlOr(url), runDir, storageState: defaultStorageState() });
           if (res.status === "match") {
             lines.push(`✓ ${r.name}: ${res.steps} steps match (${(res.durationMs / 1000).toFixed(1)}s)`);
             results.push({ name: r.name, status: "match" });
@@ -134,16 +139,19 @@ export async function serveMcp() {
           const d = res.divergence!;
           lines.push(`✗ ${r.name}: diverged at step ${d.step} (${d.action}): ${d.reason}`);
           if (d.diff) lines.push(d.diff.replace(/^/gm, "    "));
+          if (d.numbersOnly && !heal) lines.push("    Only numbers changed (likely live data). heal=true re-verifies and learns these lines as volatile.");
           if (!heal) {
             regressions++;
             results.push({ name: r.name, status: "diverged", reason: d.reason });
             continue;
           }
           const { report, runDir: vDir } = await runVerify(r.goal, {
-            url: urlOr(url), backend: backend(), maxSteps: 30, outDir: OUT, map: (await readMap())?.text, log,
+            url: urlOr(url), backend: backend(), maxSteps: 30, outDir: OUT, map: (await readMap())?.text,
+            storageState: defaultStorageState(), log,
           });
           if (report.verdict.verdict === "pass") {
-            await savePass(report);
+            const next = rerecord(r, report, d);
+            if (!("error" in next)) await saveReplay(next);
             lines.push(`  HEALED: the UI changed but "${r.goal}" still holds. Replay re-recorded.`);
             results.push({ name: r.name, status: "healed" });
           } else {
@@ -175,7 +183,7 @@ export async function serveMcp() {
         if (check) {
           const saved = await readMap();
           if (!saved) return text(`No ${MAP_FILE} yet. Call witness_map without check to create one.`);
-          const d = await checkMap(saved.map, urlOr(url), runDir);
+          const d = await checkMap(saved.map, urlOr(url), runDir, defaultStorageState());
           if (!hasDrift(d)) return text(`${MAP_FILE} matches the app.`, { drift: false });
           const lines = [
             `${MAP_FILE} has drifted:`,
@@ -186,7 +194,7 @@ export async function serveMcp() {
           ];
           return text(lines.join("\n"), { drift: true, ...d });
         }
-        const m = await buildMap({ url: urlOr(url), backend: backend(), workDir: runDir, runsDir: OUT, log });
+        const m = await buildMap({ url: urlOr(url), backend: backend(), workDir: runDir, runsDir: OUT, storageState: defaultStorageState(), log });
         await writeMap(m);
         return text(
           `Wrote ${MAP_FILE}: ${m.pages.length} page(s), ${m.features.length} feature(s).\n` +
@@ -194,6 +202,37 @@ export async function serveMcp() {
         );
       } catch (err) {
         return text(`Mapping failed: ${err instanceof Error ? err.message : err}`, undefined, true);
+      }
+    },
+  );
+
+  server.registerTool(
+    "witness_auth",
+    {
+      title: "Sign in once and reuse it",
+      description:
+        `Have the agent log in to the running app, and if the judge confirms you're signed in, save the session to ${AUTH_FILE}. ` +
+        "From then on witness_verify, witness_replay and witness_map start signed in, instead of logging in every run and crawling only the login page. " +
+        "Write credentials as {{secret:NAME}}, e.g. 'Log in as {{secret:USER}} with password {{secret:PASSWORD}}'.",
+      inputSchema: {
+        goal: z.string().describe("How to log in, with {{secret:NAME}} placeholders for credentials"),
+        url: z.string().optional(),
+      },
+    },
+    async ({ goal, url }) => {
+      try {
+        const { report, runDir } = await runVerify(`${goal}\nThe goal is only to end up signed in. Once you are, call finish.`, {
+          url: urlOr(url), backend: backend(), maxSteps: 20, outDir: OUT, saveStateTo: AUTH_FILE, log,
+        });
+        const ok = report.verdict.verdict === "pass";
+        return text(
+          (ok ? `Signed in, and the session is saved to ${AUTH_FILE}. Later runs start signed in.\n\n` : "Not signed in; nothing was saved.\n\n") +
+            formatVerdict(report, runDir),
+          { signedIn: ok, authFile: ok ? AUTH_FILE : null },
+          !ok,
+        );
+      } catch (err) {
+        return text(`Sign-in failed: ${err instanceof Error ? err.message : err}`, undefined, true);
       }
     },
   );

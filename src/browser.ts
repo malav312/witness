@@ -3,6 +3,28 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { loadSecrets, redactDeep } from "./secrets.js";
+
+/**
+ * Parse the first node of an aria snapshot line, e.g. `- button "Add" [ref=e5]`.
+ * Playwright wraps a line in YAML single quotes when it contains ": ", as in
+ * `- 'link "Monitor: 18 checks" [ref=e56]':`, so unwrap that first.
+ */
+export function parseAriaNode(line: string): Target | undefined {
+  let body = line.trim().replace(/^- /, "");
+  if (body.startsWith("'")) {
+    // Find the closing quote; inside, a literal ' is written as ''.
+    let end = 1;
+    while (end < body.length) {
+      if (body[end] === "'" && body[end + 1] === "'") end += 2;
+      else if (body[end] === "'") break;
+      else end++;
+    }
+    body = body.slice(1, end).replace(/''/g, "'");
+  }
+  const m = body.match(/^([a-z][\w-]*)(?: ("(?:[^"\\]|\\.)*"))?/i);
+  return m ? { role: m[1], name: m[2] ? JSON.parse(m[2]) : "" } : undefined;
+}
 
 export interface Target {
   role: string;
@@ -36,10 +58,11 @@ export class BrowserSession {
   private pendingConsole: string[] = [];
   private pendingRequests: string[] = [];
   private pendingDialogs: string[] = [];
+  private tracing = false;
 
   constructor(
     private readonly runDir: string,
-    private readonly opts: { headed?: boolean } = {},
+    private readonly opts: { headed?: boolean; storageState?: string } = {},
   ) {}
 
   async start(url: string) {
@@ -51,9 +74,14 @@ export class BrowserSession {
     const viewport = video ? { width: 640, height: 400 } : { width: 1280, height: 800 };
     this.context = await this.browser.newContext({
       viewport,
+      // A saved login (see `witness auth`), so runs start signed in.
+      ...(this.opts.storageState ? { storageState: this.opts.storageState } : {}),
       ...(video ? { recordVideo: { dir: video, size: viewport } } : {}),
     });
-    await this.context.tracing.start({ screenshots: true, snapshots: true });
+    // A Playwright trace stores raw DOM and network data, including typed
+    // values, and can't be redacted afterwards. With secrets configured, skip it.
+    this.tracing = loadSecrets().size === 0;
+    if (this.tracing) await this.context.tracing.start({ screenshots: true, snapshots: true });
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(5000);
 
@@ -92,8 +120,7 @@ export class BrowserSession {
   async describe(ref: string): Promise<Target | undefined> {
     try {
       const first = (await this.page.locator(`aria-ref=${ref}`).ariaSnapshot({ mode: "ai", timeout: 2000 })).split("\n")[0];
-      const m = first.match(/^- ([\w-]+)(?: ("(?:[^"\\]|\\.)*"))?/);
-      return m ? { role: m[1], name: m[2] ? JSON.parse(m[2]) : "" } : undefined;
+      return parseAriaNode(first);
     } catch {
       return undefined;
     }
@@ -134,12 +161,13 @@ export class BrowserSession {
   ): Promise<StepRecord> {
     const index = this.steps.length;
     const screenshot = join("screens", `${String(index).padStart(3, "0")}-${action}.png`);
-    await this.page.screenshot({ path: join(this.runDir, screenshot) }).catch(() => {});
+    await this.screenshotMasked(join(this.runDir, screenshot));
     // Order matters: a default-mode snapshot invalidates [ref=eN] markers, so
     // take it first and the ref snapshot the driver will target last.
     const aria = await this.page.ariaSnapshot().catch(() => "(snapshot unavailable)");
     const snapshot = await this.snapshot().catch(() => "(snapshot unavailable)");
-    const step: StepRecord = {
+    // Everything recorded is redacted: secret values become {{secret:NAME}}.
+    const step: StepRecord = redactDeep({
       index,
       action,
       input,
@@ -154,13 +182,36 @@ export class BrowserSession {
       aria,
       target,
       at: new Date().toISOString(),
-    };
+    });
     this.steps.push(step);
     return step;
   }
 
+  /** Screenshot with any field that currently holds a secret value blacked out. */
+  private async screenshotMasked(path: string) {
+    const values = [...loadSecrets().values()].filter((v) => v.length >= 3);
+    if (values.length) {
+      await this.page
+        .evaluate((vals) => {
+          for (const el of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")) {
+            if (el.type !== "password" && vals.some((v) => el.value.includes(v))) el.setAttribute("data-witness-secret", "");
+            else el.removeAttribute("data-witness-secret");
+          }
+        }, values)
+        .catch(() => {});
+    }
+    await this.page
+      .screenshot({ path, mask: values.length ? [this.page.locator("[data-witness-secret]")] : [] })
+      .catch(() => {});
+  }
+
+  /** Save cookies and localStorage (e.g. a login) for later sessions. */
+  async saveState(path: string) {
+    await this.context.storageState({ path });
+  }
+
   async stop() {
-    await this.context.tracing.stop({ path: join(this.runDir, "trace.zip") }).catch(() => {});
+    if (this.tracing) await this.context.tracing.stop({ path: join(this.runDir, "trace.zip") }).catch(() => {});
     await this.browser.close();
   }
 }

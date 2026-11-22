@@ -38,6 +38,7 @@ claude mcp add witness -e WITNESS_URL=http://localhost:3000 -- node /path/to/wit
 | `witness_verify` | Drive the app to exercise a goal and return the judge's verdict, criteria, problems and evidence path. A pass is saved as a replay. |
 | `witness_replay` | Re-check every verified goal with no LLM. `heal: true` re-verifies divergences. |
 | `witness_map` | Build the Feature Map, or `check: true` to detect drift with no LLM. |
+| `witness_auth` | Log in once, with `{{secret:NAME}}` credentials. Later runs start signed in. |
 | `witness_replays` | List the verified goals. |
 
 [`skills/witness/SKILL.md`](skills/witness/SKILL.md) is the playbook that goes with it. Copy it to `.claude/skills/witness/` in your project. It tells the agent:
@@ -61,6 +62,43 @@ claude mcp add witness -e WITNESS_URL=http://localhost:3000 -- node /path/to/wit
 
 It also raised something on its own: tasks users saved under the old key won't come back by themselves, and it offered to migrate them.
 
+## Tested on real open-source apps
+
+Two agent sessions used Witness to fix four real open issues:
+- Actual Budget, which runs entirely in the browser: #3051 and #8972
+- Uptime Kuma, a full-stack app with Node, Socket.IO, SQLite and a login: #7805 and #7897
+
+Witness reproduced each bug as a FAIL before the fix. After the fix it gave PASS on three of them. On the fourth, #3051, it gave a false FAIL, because the Driver had no way to click empty space.
+
+Those runs also exposed what breaks on real apps. All of these are fixed now, and each fix is checked again on the live Uptime Kuma instance:
+
+| Found on a real app | Fix |
+|---|---|
+| The test password ended up in 29 report and replay files, and in file names | **Secrets**: goals use `{{secret:NAME}}`; values are typed for the agent and redacted everywhere. Re-test: 0 files. |
+| Every run spent its first steps logging in, and the map crawled only the login page (2 pages) | **`witness auth`** saves a login once. Re-test: the map found 20 pages and 10 features. |
+| Live counters (heartbeats, "31m") made every replay diverge, even right after a heal | **Live-data learning**: number-only changes are flagged, and `--heal` learns them as volatile. Re-test: 3/3 stable replays. |
+| Element names with live numbers in them ("Heartbeat history: 18 checks") | Replays match those names with the numbers as wildcards |
+| The agent couldn't click empty space, which caused #3051's false FAIL | **`click_at`** tool |
+| The agent couldn't pick from `<select>` dropdowns | **`select_option`** tool |
+| Goals with the same opening overwrote each other's replays, and heal left duplicates | Replay names get a short hash, and heal keeps the name |
+| A run that hit the usage limit died with no evidence | Aborted runs are **INCONCLUSIVE**, keep their evidence, and write `progress.log` as they go |
+
+## Secrets and signing in
+
+```bash
+echo 'APP_USER=test-admin' >> .witness/secrets.env      # or WITNESS_SECRET_APP_USER=...
+echo 'APP_PASS=...'        >> .witness/secrets.env
+witness auth "Log in as {{secret:APP_USER}} with password {{secret:APP_PASS}}"
+witness map                # now crawls the signed-in app
+witness verify "Signed in, a user can create an MQTT monitor and it is still listed after a reload"
+```
+
+- **Goals refer to credentials by placeholder.** The Driver types `{{secret:APP_PASS}}`, Witness swaps in the value at the moment of typing, and every recorded artifact is redacted back to the placeholder: steps, snapshots, reports, replays, logs and file names.
+- **Screenshots** black out any field holding a secret.
+- **The Playwright trace is skipped** while secrets are configured, since it stores raw DOM values.
+- **Exported tests** read secrets from `WITNESS_SECRET_*` at run time.
+- **`witness auth`** keeps the login only if the Judge confirms you're signed in. The cookies go to `.witness/auth.json`, which is gitignored. Use `--no-auth` to ignore it.
+
 ## Replay: verify once with an agent, re-check for free
 
 A passing `verify` is saved as a **replay**: the exact steps, plus the accessibility tree expected after each one. Replays run with no LLM, in about a second.
@@ -80,6 +118,8 @@ witness export            # write them as plain Playwright tests
   healing: re-verifying "A user can add a task with the Add button…" with the agent…
   HEALED  The app changed, but the goal still holds. Replay re-recorded.
 ```
+
+**Live data.** If only the numbers on some lines changed, such as counters, timestamps or uptime %, the replay says so. `--heal` re-verifies the goal with the agent. If it still holds, it learns those lines as `volatile`: their numbers are masked from then on. Masking is per line, so a wrong count elsewhere is still caught. You can also add regexes to a replay's `ignore` list by hand.
 
 A divergence doesn't automatically mean a bug. With `--heal`, Witness sends the goal back to the agent and the judge:
 - **HEALED**: the UI changed but the goal still holds, so the replay is re-recorded.
@@ -163,7 +203,7 @@ Coding agents report success when the code compiles or the tests they wrote pass
 
 | Piece | What it does |
 |---|---|
-| **Driver** (`src/driver.ts`) | Claude agent loop with browser tools (snapshot, click, type, press, navigate, reload, screenshot). It exercises the goal like a user would and reports what it did, not whether it worked. |
+| **Driver** (`src/driver.ts`) | Claude agent loop with browser tools (snapshot, click, type, select_option, click_at, press, navigate, reload, screenshot). It exercises the goal like a user would and reports what it did, not whether it worked. |
 | **Evidence** (`src/browser.ts`) | Every action gets a screenshot, the accessibility tree afterwards, new console errors, failed requests and dialogs. Dialogs are accepted the way a user would, and their text is kept. The whole run is captured as a Playwright trace. |
 | **Judge** (`src/judge.ts`) | A separate model call that sees only the evidence. It breaks the goal into criteria, cites step numbers for each, and returns `pass` / `fail` / `inconclusive`. Missing evidence is never a pass. |
 | **Mapper** (`src/map.ts`) | Crawls the app into a Feature Map for the Driver, and detects drift with no LLM. |
@@ -201,6 +241,7 @@ No-LLM tests, run with `npm test`:
 - `test/replay-smoke.ts`: replay matches the clean app and diverges at the right step on each bug
 - `test/map-smoke.ts`: the crawl and drift check
 - `test/mcp-smoke.ts`: a real MCP client over stdio lists the tools and calls the ones that need no LLM
+- `test/gaps-smoke.ts`: secrets, select_option, click_at, saved logins, live-data masking, unique replay names, and aborted runs
 
 ## Roadmap
 
