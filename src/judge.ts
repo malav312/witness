@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { StepRecord } from "./browser.js";
 import { MODEL, client, requestDefaults } from "./claude.js";
+import { runClaudeCode } from "./claude-code.js";
+import type { Backend } from "./driver.js";
 
 export const Verdict = z.object({
   verdict: z.enum(["pass", "fail", "inconclusive"]),
@@ -48,12 +50,15 @@ function pickScreens(steps: StepRecord[]): StepRecord[] {
   return [...chosen.values()].sort((a, b) => a.index - b.index);
 }
 
-export async function judge(
-  runDir: string,
-  goal: string,
-  steps: StepRecord[],
-): Promise<{ verdict: Verdict; usage: { input: number; output: number } }> {
-  const log = steps
+type JudgeResult = { verdict: Verdict; usage: { input: number; output: number } };
+
+const noVerdict = (why: string, usage: JudgeResult["usage"]): JudgeResult => ({
+  verdict: { verdict: "inconclusive", summary: `Judge produced no verdict (${why}).`, criteria: [], problems: [] },
+  usage,
+});
+
+function actionLog(steps: StepRecord[]): string {
+  return steps
     .map((s) => {
       const lines = [`Step ${s.index}: ${s.action} ${JSON.stringify(s.input)} -> ${s.ok ? "ok" : "ERROR"}: ${s.result}`];
       lines.push(`  url: ${s.url}`);
@@ -63,9 +68,36 @@ export async function judge(
       return lines.join("\n");
     })
     .join("\n\n");
+}
 
+export function judge(runDir: string, goal: string, steps: StepRecord[], backend: Backend): Promise<JudgeResult> {
+  return backend === "api" ? judgeWithApi(runDir, goal, steps) : judgeWithClaudeCode(runDir, goal, steps);
+}
+
+async function judgeWithClaudeCode(runDir: string, goal: string, steps: StepRecord[]): Promise<JudgeResult> {
+  const screens = pickScreens(steps)
+    .map((s) => `- Step ${s.index} (${s.action}): ${join(runDir, s.screenshot)}`)
+    .join("\n");
+  const result = await runClaudeCode({
+    prompt:
+      `Goal:\n${goal}\n\nAction log:\n${actionLog(steps)}\n\n` +
+      `Screenshots. Open each one with the Read tool before deciding:\n${screens}`,
+    systemPrompt: SYSTEM,
+    tools: "Read",
+    allowedTools: ["Read"],
+    // Claude Code's validator doesn't accept the draft-2020-12 $schema marker.
+    jsonSchema: (({ $schema: _, ...schema }) => schema)(z.toJSONSchema(Verdict)),
+    cwd: runDir,
+    addDirs: [runDir],
+  });
+  const usage = { input: result.inputTokens, output: result.outputTokens };
+  const parsed = Verdict.safeParse(result.structured);
+  return parsed.success ? { verdict: parsed.data, usage } : noVerdict("no structured output", usage);
+}
+
+async function judgeWithApi(runDir: string, goal: string, steps: StepRecord[]): Promise<JudgeResult> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
-    { type: "text", text: `Goal:\n${goal}\n\nAction log:\n${log}` },
+    { type: "text", text: `Goal:\n${goal}\n\nAction log:\n${actionLog(steps)}` },
   ];
   for (const s of pickScreens(steps)) {
     const data = (await readFile(join(runDir, s.screenshot))).toString("base64");
@@ -84,15 +116,7 @@ export async function judge(
 
   const usage = { input: response.usage.input_tokens, output: response.usage.output_tokens };
   if (response.stop_reason === "refusal" || !response.parsed_output) {
-    return {
-      verdict: {
-        verdict: "inconclusive",
-        summary: `Judge produced no verdict (stop_reason: ${response.stop_reason}).`,
-        criteria: [],
-        problems: [],
-      },
-      usage,
-    };
+    return noVerdict(`stop_reason: ${response.stop_reason}`, usage);
   }
   return { verdict: response.parsed_output, usage };
 }

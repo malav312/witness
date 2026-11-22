@@ -17,6 +17,9 @@ Options:
   --url <url>         App to open (default: $WITNESS_URL or http://localhost:4173)
   --max-steps <n>     Driver turn limit (default: 30)
   --out <dir>         Where run folders go (default: .witness/runs)
+  --backend <name>    claude-code: your Claude Code sign-in (e.g. a Claude subscription)
+                      api: the Claude API with ANTHROPIC_API_KEY
+                      (default: api if ANTHROPIC_API_KEY is set, else claude-code)
   --headed            Show the browser
   --json              Print the report as JSON instead of a summary
 
@@ -25,6 +28,8 @@ Exit code: 0 pass, 1 fail, 2 inconclusive, 3 error.`;
 async function verify(goal: string, values: Record<string, string | boolean | undefined>) {
   const url = String(values.url ?? process.env.WITNESS_URL ?? "http://localhost:4173");
   const maxSteps = Number(values["max-steps"] ?? 30);
+  const backend = String(values.backend ?? (process.env.ANTHROPIC_API_KEY ? "api" : "claude-code"));
+  if (backend !== "api" && backend !== "claude-code") throw new Error(`Unknown backend "${backend}"`);
   const startedAt = new Date();
   const id = startedAt.toISOString().replace(/[:.]/g, "-");
   const runDir = resolve(String(values.out ?? ".witness/runs"), id);
@@ -33,24 +38,25 @@ async function verify(goal: string, values: Record<string, string | boolean | un
   const log = (line: string) => quiet || console.error(line);
 
   log(`witness › ${goal}`);
-  log(`  driving ${url}`);
+  log(`  driving ${url} via ${backend}`);
   const session = new BrowserSession(runDir, { headed: Boolean(values.headed) });
   let driven;
   try {
     await session.start(url);
-    driven = await drive(session, runDir, goal, { maxSteps, log });
+    driven = await drive(session, runDir, goal, { backend, maxSteps, log });
   } finally {
     await session.stop();
   }
 
   log(`  judging ${driven.steps.length} steps of evidence…`);
-  const judged = await judge(runDir, goal, driven.steps);
+  const judged = await judge(runDir, goal, driven.steps, backend);
 
   const report = {
     id,
     goal,
     url,
-    model: MODEL,
+    model: backend === "api" ? MODEL : process.env.WITNESS_MODEL ?? "claude-code default",
+    backend,
     startedAt: startedAt.toISOString(),
     durationMs: Date.now() - startedAt.getTime(),
     driver: { status: driven.status, summary: driven.summary },
@@ -88,6 +94,7 @@ async function main() {
       url: { type: "string" },
       "max-steps": { type: "string" },
       out: { type: "string" },
+      backend: { type: "string" },
       headed: { type: "boolean" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },

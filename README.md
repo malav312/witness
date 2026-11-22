@@ -35,7 +35,6 @@ Coding agents report success when the code compiles or the tests they wrote pass
 ```bash
 npm install
 npx playwright install chromium
-export ANTHROPIC_API_KEY=...
 
 # Terminal 1: demo app, optionally with bugs turned on
 WITNESS_BUGS=no-persist npm run demo
@@ -43,6 +42,13 @@ WITNESS_BUGS=no-persist npm run demo
 # Terminal 2
 ./bin/witness.js verify "A user can add a task and it is still there after reloading"
 ```
+
+### Backends
+
+| `--backend` | Uses | Notes |
+|---|---|---|
+| `claude-code` (default with no API key) | Your local Claude Code sign-in, e.g. a Claude subscription | Runs `claude -p` headless. Witness serves its browser tools to it over a local MCP server, so evidence is still recorded in-process. The judge opens screenshots with Claude Code's Read tool. |
+| `api` (default when `ANTHROPIC_API_KEY` is set) | The Claude API | The agent loop runs inside Witness (`claude-opus-5-5` by default, override with `WITNESS_MODEL`). |
 
 Demo bugs (`demo/server.js`): `no-persist`, `dead-add`, `count-off`, `delete-wrong`, `empty-allowed`, `toggle-noop`, `clear-all`, `console-error`.
 
@@ -53,9 +59,10 @@ No-LLM smoke test of the browser and evidence layer: `npx tsx test/browser-smoke
 ## Roadmap
 
 - [x] Phase 1: Driver, Judge, evidence bundle, demo app
+- [x] Claude Code backend: run on a Claude subscription, with the browser tools served over MCP
 - [ ] Replay: save passing runs as plain Playwright scripts; re-run without an LLM, and call the model only when a replay breaks
 - [ ] Mapper: crawl an app into a Feature Map (`.witness/map.yaml`) the driver reads first
-- [ ] MCP server and skill, so Claude Code, Cursor and others can call `witness_verify`
+- [ ] Standalone MCP server and skill, so Claude Code, Cursor and others can call `witness_verify` directly
 - [ ] Eval: catch rate and false-positive rate across every demo bug
 - [ ] `witness refresh` and a GitHub Action
 

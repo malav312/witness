@@ -10,6 +10,7 @@ export interface RunReport {
   goal: string;
   url: string;
   model: string;
+  backend: string;
   startedAt: string;
   durationMs: number;
   driver: { status: DriverResult["status"]; summary: string };
@@ -69,7 +70,7 @@ figure img{width:100%;display:block;border-bottom:1px solid #d0d7de} figcaption{
 </style></head><body>
 <span class="verdict">${esc(v.verdict)}</span>
 <h1>${esc(r.goal)}</h1>
-<div class="meta">${esc(r.url)} · ${r.steps.length} steps · ${(r.durationMs / 1000).toFixed(1)}s · ${esc(r.model)} · ${r.usage.input + r.usage.output} tokens</div>
+<div class="meta">${esc(r.url)} · ${r.steps.length} steps · ${(r.durationMs / 1000).toFixed(1)}s · ${esc(r.backend)} (${esc(r.model)}) · ${r.usage.input + r.usage.output} tokens</div>
 <p>${esc(v.summary)}</p>
 <table>${criteria}</table>
 ${v.problems.length ? `<h2>Problems observed</h2><ul>${v.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
