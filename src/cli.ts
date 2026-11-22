@@ -14,6 +14,7 @@ import {
   type ReplayResult,
 } from "./replay.js";
 import { newRunDir, runVerify, type VerifyOptions } from "./verify.js";
+import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
 
 const HELP = `witness: agents don't get to say "it works" without a witness.
 
@@ -22,6 +23,8 @@ Usage:
                                       A pass is saved as a replay.
   witness replay [name...] [options]  Re-run saved replays with no LLM (all if no names).
   witness export [name...] [--dir d]  Write replays as plain Playwright tests.
+  witness map [--check]               Crawl the app into a Feature Map (${MAP_FILE}),
+                                      or report drift from the saved one (no LLM).
 
 Options:
   --url <url>         App to open (default: $WITNESS_URL or http://localhost:4173)
@@ -34,6 +37,7 @@ Options:
   --heal              replay: when a replay diverges, re-verify with the agent.
                       Still passing: re-record the replay. Failing: report a regression.
   --dir <dir>         export: output folder (default: tests/witness)
+  --no-map            verify: don't give the Driver the Feature Map
   --headed            Show the browser
   --json              Print results as JSON
 
@@ -41,7 +45,7 @@ Exit code: 0 pass, 1 fail, 2 inconclusive, 3 error.`;
 
 type Values = Record<string, string | boolean | undefined>;
 
-function options(values: Values): VerifyOptions & { json: boolean } {
+async function options(values: Values): Promise<VerifyOptions & { json: boolean }> {
   const backend = String(values.backend ?? (process.env.ANTHROPIC_API_KEY ? "api" : "claude-code"));
   if (backend !== "api" && backend !== "claude-code") throw new Error(`Unknown backend "${backend}"`);
   const json = Boolean(values.json);
@@ -51,6 +55,7 @@ function options(values: Values): VerifyOptions & { json: boolean } {
     maxSteps: Number(values["max-steps"] ?? 30),
     outDir: String(values.out ?? ".witness/runs"),
     headed: Boolean(values.headed),
+    map: values["no-map"] ? undefined : (await readMap())?.text,
     log: (line) => json || console.error(line),
     json,
   };
@@ -80,7 +85,7 @@ async function saveIfPassed(report: RunReport, log: (l: string) => void): Promis
 }
 
 async function verify(goal: string, values: Values) {
-  const opts = options(values);
+  const opts = await options(values);
   const { report, runDir } = await runVerify(goal, opts);
   const replayFile = values["no-save"] ? undefined : await saveIfPassed(report, opts.log!);
   if (opts.json) {
@@ -94,7 +99,7 @@ async function verify(goal: string, values: Values) {
 }
 
 async function replay(names: string[], values: Values) {
-  const opts = options(values);
+  const opts = await options(values);
   const replays = await loadReplays(names);
   if (!replays.length) throw new Error(`No replays in ${REPLAY_DIR}. A passing "witness verify" creates one.`);
 
@@ -150,6 +155,36 @@ async function exportSpecs(names: string[], values: Values) {
   return 0;
 }
 
+async function map(values: Values) {
+  const opts = await options(values);
+  const { runDir } = await newRunDir(opts.outDir, "-map");
+  if (values.check) {
+    const saved = await readMap();
+    if (!saved) throw new Error(`No ${MAP_FILE} yet. Create one with: witness map`);
+    const d = await checkMap(saved.map, opts.url, runDir);
+    if (!hasDrift(d)) {
+      console.log(`✓ ${MAP_FILE} matches the app (${saved.map.pages.length} pages, ${saved.map.features.length} features)`);
+      return 0;
+    }
+    console.log(`✗ ${MAP_FILE} has drifted from the app:`);
+    for (const p of d.addedPages) console.log(`  + new page ${p}`);
+    for (const p of d.removedPages) console.log(`  - page gone: ${p}`);
+    for (const c of d.changedPages) {
+      for (const a of c.added) console.log(`  + ${c.path}: ${a}`);
+      for (const r of c.removed) console.log(`  - ${c.path}: ${r}`);
+    }
+    for (const f of d.staleFeatures) console.log(`  ! feature "${f.name}" relies on missing ${f.missing.join(", ")}`);
+    console.log(`\nRegenerate with: witness map`);
+    return 1;
+  }
+  console.error(`witness map › ${opts.url}`);
+  const m = await buildMap({ url: opts.url, backend: opts.backend, workDir: runDir, runsDir: opts.outDir, log: opts.log! });
+  await writeMap(m);
+  console.log(`\nwrote ${MAP_FILE}: ${m.pages.length} page(s), ${m.features.length} feature(s)`);
+  for (const f of m.features) console.log(`  • ${f.name}  (${f.page})${f.traps.length ? `  · ${f.traps.length} trap(s)` : ""}`);
+  return 0;
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -161,6 +196,8 @@ async function main() {
       "no-save": { type: "boolean" },
       heal: { type: "boolean" },
       dir: { type: "string" },
+      "no-map": { type: "boolean" },
+      check: { type: "boolean" },
       headed: { type: "boolean" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -174,6 +211,7 @@ async function main() {
   if (command === "verify" && rest.length) return verify(rest.join(" "), values);
   if (command === "replay") return replay(rest, values);
   if (command === "export") return exportSpecs(rest, values);
+  if (command === "map") return map(values);
   console.log(HELP);
   return 3;
 }

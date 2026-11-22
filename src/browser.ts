@@ -19,6 +19,7 @@ export interface StepRecord {
   screenshot: string; // path relative to the run directory
   consoleErrors: string[]; // new since the previous step
   failedRequests: string[]; // new since the previous step
+  dialogs: string[]; // alert/confirm/prompt shown during the step (accepted)
   snapshot: string; // accessibility tree after the step, with [ref=eN] markers
   aria: string; // same tree in Playwright's stable format, used by replays
   target?: Target; // role + accessible name of the element acted on
@@ -34,6 +35,7 @@ export class BrowserSession {
   readonly allFailedRequests: string[] = [];
   private pendingConsole: string[] = [];
   private pendingRequests: string[] = [];
+  private pendingDialogs: string[] = [];
 
   constructor(
     private readonly runDir: string,
@@ -53,6 +55,12 @@ export class BrowserSession {
       if (msg.type() === "error") this.recordConsole(`console.error: ${msg.text()}`);
     });
     this.page.on("pageerror", (err) => this.recordConsole(`uncaught: ${err.message}`));
+    // A real user answers dialogs; Playwright would silently dismiss them.
+    // Accept, and keep the text as evidence.
+    this.page.on("dialog", (d) => {
+      this.pendingDialogs.push(`${d.type()} "${d.message()}" → accepted`);
+      d.accept().catch(() => {});
+    });
     this.page.on("requestfailed", (req) =>
       this.recordRequest(`${req.method()} ${req.url()} failed: ${req.failure()?.errorText}`),
     );
@@ -135,6 +143,7 @@ export class BrowserSession {
       screenshot,
       consoleErrors: this.pendingConsole.splice(0),
       failedRequests: this.pendingRequests.splice(0),
+      dialogs: this.pendingDialogs.splice(0),
       snapshot,
       aria,
       target,

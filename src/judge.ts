@@ -64,6 +64,7 @@ function actionLog(steps: StepRecord[]): string {
       lines.push(`  url: ${s.url}`);
       if (s.consoleErrors.length) lines.push(`  console errors: ${s.consoleErrors.join(" | ")}`);
       if (s.failedRequests.length) lines.push(`  failed requests: ${s.failedRequests.join(" | ")}`);
+      if (s.dialogs?.length) lines.push(`  dialogs: ${s.dialogs.join(" | ")}`);
       if (s.snapshot) lines.push(`  page after:\n${s.snapshot.replace(/^/gm, "    ")}`);
       return lines.join("\n");
     })

@@ -21,6 +21,7 @@ export const BUGS = {
   // Not a bug: a harmless UI change. Replays diverge; --heal should re-verify,
   // find the goal still holds, and re-record.
   "new-heading": "(not a bug) The heading is renamed to 'My tasks'",
+  "rename-add": "(not a bug) The Add button is renamed to 'Add task'",
 };
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,11 +43,15 @@ const html = readFileSync(join(here, "index.html"), "utf8").replace(
   `window.__BUGS = ${JSON.stringify(enabled)};`,
 );
 
+const settingsHtml = readFileSync(join(here, "settings.html"), "utf8");
+
 http
   .createServer((req, res) => {
-    if (req.url === "/" || req.url?.startsWith("/?")) {
+    const path = new URL(req.url ?? "/", "http://x").pathname;
+    const page = { "/": html, "/settings": settingsHtml }[path];
+    if (page) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(html);
+      res.end(page);
     } else {
       res.writeHead(404).end("not found");
     }

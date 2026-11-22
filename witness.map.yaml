@@ -1,0 +1,80 @@
+# Witness Feature Map: how to reach and operate this app, for testing agents.
+# Regenerate with `witness map`, check for drift with `witness map --check`.
+# Safe to edit and commit. The app is the source of truth.
+generated: 2026-11-22T21:03:04.053Z
+url: http://localhost:4173
+summary: A simple to-do app. Users add tasks, mark them complete, clear completed tasks, and use a settings page to change delete confirmation and the "items left" counter.
+pages:
+  - path: /
+    title: Tasks
+    purpose: "Task list: add tasks, see the items-left counter, clear completed tasks"
+    controls:
+      - link "Settings"
+      - textbox "New task"
+      - button "Add"
+      - button "Clear completed"
+  - path: /settings
+    title: Settings · Tasks
+    purpose: Settings for delete confirmation and the items-left counter
+    controls:
+      - link "Back to tasks"
+      - checkbox "Ask for confirmation before deleting a task"
+      - checkbox "Show the \"items left\" counter"
+features:
+  - name: Add a task
+    page: /
+    how_to_reach:
+      - Open /
+      - Type in textbox "New task"
+      - Click button "Add"
+    controls:
+      - textbox "New task"
+      - button "Add"
+    behavior: The task appears in list "Task list", the input clears and the "items left" count goes up by one.
+    traps:
+      - Reload the page to check that tasks persist. A run on 2026-11-22 found that every added task was gone after a reload or after navigating back, with no console errors (from runs)
+      - The crawl started with an empty list, so the per-task controls (complete toggle, delete) were never seen. Find their names after adding a task
+  - name: Complete and delete tasks
+    page: /
+    how_to_reach:
+      - Add at least one task
+      - Use the per-task controls that then appear in list "Task list"
+    controls: []
+    behavior: Completing a task should lower the "items left" count. Deleting removes the task from the list.
+    traps:
+      - The per-task controls only appear once tasks exist. The crawl did not record their names
+      - Whether deleting asks for confirmation depends on the checkbox "Ask for confirmation before deleting a task" on /settings. It was unchecked in the crawl, so by default deletion should happen without a dialog
+  - name: Clear completed tasks
+    page: /
+    how_to_reach:
+      - Add tasks and mark some complete
+      - Click button "Clear completed" in the footer
+    controls:
+      - button "Clear completed"
+    behavior: Removes all completed tasks from the list. Uncompleted tasks stay.
+    traps:
+      - The button is visible even when the list is empty
+  - name: Items left counter
+    page: /
+    how_to_reach:
+      - Open / and look at the footer text "N items left"
+    controls: []
+    behavior: Shows how many tasks are not completed ("0 items left" when empty).
+    traps:
+      - Its visibility is controlled by the checkbox "Show the \"items left\" counter" on /settings, which is checked by default
+  - name: Change settings
+    page: /settings
+    how_to_reach:
+      - Click link "Settings" on /
+      - Toggle a checkbox
+      - Click link "Back to tasks" to see the effect
+    controls:
+      - link "Settings"
+      - checkbox "Ask for confirmation before deleting a task"
+      - checkbox "Show the \"items left\" counter"
+      - link "Back to tasks"
+    behavior: Turning on confirmation makes deletes ask first. Unchecking the counter checkbox hides "items left" on /.
+    traps:
+      - The settings take effect on a different page (/)
+      - An empty status region on the page probably shows a save message after a change
+      - Reload to check that settings persist. Tasks did not survive navigation in the 2026-11-22 run, so settings may not either (from runs)

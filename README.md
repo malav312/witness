@@ -45,6 +45,30 @@ The model is used only when something actually changed.
 
 Replays find elements by role and accessible name (`getByRole("button", { name: "Add" })`), not CSS selectors, so they survive markup refactors. `witness export` turns each one into a standalone `@playwright/test` spec using `toMatchAriaSnapshot`, so you can run it in any CI without Witness.
 
+## Feature Map: what the agent reads first
+
+```bash
+witness map           # crawl the app and write witness.map.yaml
+witness map --check   # re-crawl and report drift, no LLM (exit 1 on drift)
+```
+
+The Mapper has two parts:
+- A **deterministic crawl**: every same-origin page, its title, accessibility tree and controls.
+- **One model call**: turns the crawl, plus the newest lesson per goal from past `verify` runs, into features. Each feature gets how to reach it, the controls it uses, what should happen, and *traps*, such as a setting on another page that changes behavior here.
+
+Pages and controls in the map come from the crawl, not the model, so `--check` can diff them and name the features whose controls disappeared:
+
+```
+✗ witness.map.yaml has drifted from the app:
+  + /: button "Add task"
+  - /: button "Add"
+  ! feature "Add a task" relies on missing button "Add"
+```
+
+`verify` gives the map to the Driver automatically when `witness.map.yaml` exists (`--no-map` to skip). The Judge never sees the map, so the verdict still rests on evidence only. The map is plain YAML, meant to be edited and committed. See [witness.map.yaml](witness.map.yaml) for the demo app's map.
+
+Lessons from runs are written as things to check, with a date ("reload to confirm tasks persist; a run on 2026-11-22 found they did not"), never as facts. A bug that has since been fixed shouldn't become permanent lore.
+
 ## Eval: does it actually catch bugs?
 
 ```bash
@@ -96,8 +120,9 @@ Coding agents report success when the code compiles or the tests they wrote pass
 | Piece | What it does |
 |---|---|
 | **Driver** (`src/driver.ts`) | Claude agent loop with browser tools (snapshot, click, type, press, navigate, reload, screenshot). It exercises the goal like a user would and reports what it did, not whether it worked. |
-| **Evidence** (`src/browser.ts`) | Every action gets a screenshot, the accessibility tree afterwards, and new console errors and failed requests. The whole run is captured as a Playwright trace. |
+| **Evidence** (`src/browser.ts`) | Every action gets a screenshot, the accessibility tree afterwards, new console errors, failed requests and dialogs. Dialogs are accepted the way a user would, and their text is kept. The whole run is captured as a Playwright trace. |
 | **Judge** (`src/judge.ts`) | A separate model call that sees only the evidence. It breaks the goal into criteria, cites step numbers for each, and returns `pass` / `fail` / `inconclusive`. Missing evidence is never a pass. |
+| **Mapper** (`src/map.ts`) | Crawls the app into a Feature Map for the Driver, and detects drift with no LLM. |
 | **Replay** (`src/replay.ts`) | Saves passing runs as role/name-targeted steps with expected aria snapshots; replays them with a line diff on divergence; exports Playwright specs. |
 | **Report** (`src/report.ts`) | `report.json` for machines, `report.html` for humans, with "what the agent claimed" shown next to what the judge found. |
 
@@ -121,18 +146,21 @@ WITNESS_BUGS=no-persist npm run demo
 | `claude-code` (default with no API key) | Your local Claude Code sign-in, e.g. a Claude subscription | Runs `claude -p` headless. Witness serves its browser tools to it over a local MCP server, so evidence is still recorded in-process. The judge opens screenshots with Claude Code's Read tool. |
 | `api` (default when `ANTHROPIC_API_KEY` is set) | The Claude API | The agent loop runs inside Witness (`claude-opus-5-5` by default, override with `WITNESS_MODEL`). |
 
-Demo bugs (`demo/server.js`): `no-persist`, `dead-add`, `count-off`, `delete-wrong`, `empty-allowed`, `toggle-noop`, `clear-all`, `console-error`. There is also `new-heading`, a harmless UI change for trying `--heal`.
+Demo bugs (`demo/server.js`): `no-persist`, `dead-add`, `count-off`, `delete-wrong`, `empty-allowed`, `toggle-noop`, `clear-all`, `console-error`. There are also two harmless changes: `new-heading`, for trying `--heal`, and `rename-add`, for trying `map --check`. The demo has a `/settings` page whose options change behavior on the task list.
 
 Exit codes: `0` pass, `1` fail, `2` inconclusive, `3` error, so it can gate CI or an agent's "done".
 
-No-LLM tests: `npx tsx test/browser-smoke.ts` (browser and evidence layer) and `npx tsx test/replay-smoke.ts` (replay matches the clean app and diverges at the right step on each bug).
+No-LLM tests, run with `npm test`:
+- `test/browser-smoke.ts`: the browser and evidence layer
+- `test/replay-smoke.ts`: replay matches the clean app and diverges at the right step on each bug
+- `test/map-smoke.ts`: the crawl and drift check
 
 ## Roadmap
 
 - [x] Phase 1: Driver, Judge, evidence bundle, demo app
 - [x] Claude Code backend: run on a Claude subscription, with the browser tools served over MCP
 - [x] Replay: passing runs re-run without an LLM, `--heal` calls the model only when a replay diverges, and export to Playwright tests
-- [ ] Mapper: crawl an app into a Feature Map (`.witness/map.yaml`) the driver reads first
+- [x] Mapper: crawl the app into a Feature Map (`witness.map.yaml`) that the Driver reads first, with `--check` for drift
 - [ ] Standalone MCP server and skill, so Claude Code, Cursor and others can call `witness_verify` directly
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [ ] `witness refresh` and a GitHub Action

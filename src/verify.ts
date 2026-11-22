@@ -13,6 +13,7 @@ export interface VerifyOptions {
   maxSteps: number;
   outDir: string;
   headed?: boolean;
+  map?: string;
   log?: (line: string) => void;
 }
 
@@ -29,12 +30,12 @@ export async function runVerify(goal: string, opts: VerifyOptions): Promise<{ re
   const { id, runDir, startedAt } = await newRunDir(opts.outDir);
 
   log(`witness › ${goal}`);
-  log(`  driving ${opts.url} via ${opts.backend}`);
+  log(`  driving ${opts.url} via ${opts.backend}${opts.map ? " with the Feature Map" : ""}`);
   const session = new BrowserSession(runDir, { headed: opts.headed });
   let driven;
   try {
     await session.start(opts.url);
-    driven = await drive(session, runDir, goal, { backend: opts.backend, maxSteps: opts.maxSteps, log });
+    driven = await drive(session, runDir, goal, { backend: opts.backend, maxSteps: opts.maxSteps, map: opts.map, log });
   } finally {
     await session.stop();
   }

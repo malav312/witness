@@ -108,6 +108,7 @@ export async function runTool(
   const lines = [`${step.ok ? "OK" : "ERROR"}: ${step.result}`, `URL: ${step.url}`];
   if (step.consoleErrors.length) lines.push(`Console errors:\n${step.consoleErrors.join("\n")}`);
   if (step.failedRequests.length) lines.push(`Failed requests:\n${step.failedRequests.join("\n")}`);
+  if (step.dialogs.length) lines.push(`Dialogs:\n${step.dialogs.join("\n")}`);
   lines.push(`Page after this step:\n${step.snapshot}`);
   return { text: lines.join("\n"), isError: !step.ok };
 }

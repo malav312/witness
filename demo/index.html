@@ -13,11 +13,13 @@
       li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eee; }
       li.done span { text-decoration: line-through; color: #999; }
       li span { flex: 1; }
+      nav { font-size: 14px; text-align: right; }
       footer { display: flex; justify-content: space-between; margin-top: 12px; color: #666; font-size: 14px; }
     </style>
     <script>/*__BUGS__*/</script>
   </head>
   <body>
+    <nav><a href="/settings">Settings</a></nav>
     <h1>Tasks</h1>
     <form id="new">
       <input id="title" type="text" aria-label="New task" placeholder="What needs doing?" autocomplete="off" />
@@ -32,6 +34,7 @@
     <script>
       const bug = (name) => window.__BUGS.includes(name);
       const KEY = "witness-demo-todos";
+      const settings = { confirmDelete: false, showCount: true, ...JSON.parse(localStorage.getItem("witness-demo-settings") ?? "{}") };
       let todos = JSON.parse(localStorage.getItem(KEY) ?? "[]");
       let nextId = todos.reduce((m, t) => Math.max(m, t.id), 0) + 1;
 
@@ -60,6 +63,7 @@
           del.textContent = "Delete";
           del.setAttribute("aria-label", `Delete "${t.title}"`);
           del.onclick = () => {
+            if (settings.confirmDelete && !confirm(`Delete "${t.title}"?`)) return;
             const idx = bug("delete-wrong") ? Math.min(i + 1, todos.length - 1) : i;
             todos.splice(idx, 1);
             save();
@@ -70,6 +74,7 @@
         });
         const left = todos.filter((t) => !t.done).length + (bug("count-off") ? 1 : 0);
         document.getElementById("count").textContent = `${left} item${left === 1 ? "" : "s"} left`;
+        document.getElementById("count").hidden = !settings.showCount;
       }
 
       function add() {
@@ -94,6 +99,7 @@
         render();
       };
       if (bug("new-heading")) document.querySelector("h1").textContent = "My tasks";
+      if (bug("rename-add")) document.getElementById("add").textContent = "Add task";
       render();
     </script>
   </body>

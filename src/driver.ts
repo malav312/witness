@@ -25,11 +25,17 @@ export interface DriverResult {
 interface DriveOptions {
   backend: Backend;
   maxSteps: number;
+  /** Feature Map YAML. A head start for the Driver, not the source of truth. */
+  map?: string;
   log?: (line: string) => void;
 }
 
-const goalPrompt = (goal: string, url: string) =>
-  `Goal to exercise:\n${goal}\n\nThe app is open at ${url}.`;
+const goalPrompt = (goal: string, url: string, map?: string) =>
+  `Goal to exercise:\n${goal}\n\nThe app is open at ${url}.` +
+  (map
+    ? `\n\nFeature Map of this app, written earlier. Use it to find your way and to know the traps, ` +
+      `but trust what the app shows you now if they disagree:\n<feature_map>\n${map}\n</feature_map>`
+    : "");
 
 export function drive(session: BrowserSession, runDir: string, goal: string, opts: DriveOptions) {
   return opts.backend === "api"
@@ -51,7 +57,7 @@ async function driveWithClaudeCode(
   });
   try {
     const result = await runClaudeCode({
-      prompt: `${goalPrompt(goal, session.page.url())}\n\nUse only the witness tools.`,
+      prompt: `${goalPrompt(goal, session.page.url(), opts.map)}\n\nUse only the witness tools.`,
       systemPrompt: DRIVER_SYSTEM,
       mcpUrl: server.url,
       tools: "",
@@ -83,7 +89,7 @@ async function driveWithApi(
     input_schema: z.toJSONSchema(z.object(spec.shape).strict()) as Anthropic.Beta.BetaTool["input_schema"],
   }));
   const messages: Anthropic.Beta.BetaMessageParam[] = [
-    { role: "user", content: goalPrompt(goal, session.page.url()) },
+    { role: "user", content: goalPrompt(goal, session.page.url(), opts.map) },
   ];
   const usage = { input: 0, output: 0 };
 
