@@ -80,6 +80,7 @@ export async function runTool(
     return { imageBase64, isError: false };
   }
 
+  const target = input.ref ? await session.describe(input.ref) : undefined;
   const step = await session.act(name, input, async (page) => {
     switch (name) {
       case "click":
@@ -101,7 +102,7 @@ export async function runTool(
         await page.reload();
         return "Reloaded";
     }
-  });
+  }, target);
   log(`  #${step.index} ${step.action} ${step.ok ? "" : "FAILED "}${step.result}`);
 
   const lines = [`${step.ok ? "OK" : "ERROR"}: ${step.result}`, `URL: ${step.url}`];

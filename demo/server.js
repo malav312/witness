@@ -18,6 +18,9 @@ export const BUGS = {
   "toggle-noop": "Checking a todo does not mark it done",
   "clear-all": "'Clear completed' removes every todo, not just completed ones",
   "console-error": "Adding a todo throws an uncaught error in the console",
+  // Not a bug: a harmless UI change. Replays diverge; --heal should re-verify,
+  // find the goal still holds, and re-record.
+  "new-heading": "(not a bug) The heading is renamed to 'My tasks'",
 };
 
 const here = dirname(fileURLToPath(import.meta.url));

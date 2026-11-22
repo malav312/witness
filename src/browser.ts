@@ -4,6 +4,11 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
+export interface Target {
+  role: string;
+  name: string;
+}
+
 export interface StepRecord {
   index: number;
   action: string;
@@ -14,7 +19,9 @@ export interface StepRecord {
   screenshot: string; // path relative to the run directory
   consoleErrors: string[]; // new since the previous step
   failedRequests: string[]; // new since the previous step
-  snapshot: string; // accessibility tree after the step
+  snapshot: string; // accessibility tree after the step, with [ref=eN] markers
+  aria: string; // same tree in Playwright's stable format, used by replays
+  target?: Target; // role + accessible name of the element acted on
   at: string;
 }
 
@@ -67,6 +74,17 @@ export class BrowserSession {
     this.allFailedRequests.push(line);
   }
 
+  /** Role and accessible name of an element, so a replay can find it again without refs. */
+  async describe(ref: string): Promise<Target | undefined> {
+    try {
+      const first = (await this.page.locator(`aria-ref=${ref}`).ariaSnapshot({ mode: "ai", timeout: 2000 })).split("\n")[0];
+      const m = first.match(/^- ([\w-]+)(?: ("(?:[^"\\]|\\.)*"))?/);
+      return m ? { role: m[1], name: m[2] ? JSON.parse(m[2]) : "" } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Accessibility snapshot with [ref=eN] markers the driver can target. */
   async snapshot(): Promise<string> {
     return this.page.ariaSnapshot({ mode: "ai" });
@@ -77,6 +95,7 @@ export class BrowserSession {
     action: string,
     input: Record<string, unknown>,
     fn: (page: Page) => Promise<string | void>,
+    target?: Target,
   ): Promise<StepRecord> {
     let ok = true;
     let result: string;
@@ -89,7 +108,7 @@ export class BrowserSession {
       ok = false;
       result = err instanceof Error ? err.message.split("\n")[0] : String(err);
     }
-    return this.record(action, input, ok, result);
+    return this.record(action, input, ok, result, target);
   }
 
   private async record(
@@ -97,10 +116,14 @@ export class BrowserSession {
     input: Record<string, unknown>,
     ok: boolean,
     result: string,
+    target?: Target,
   ): Promise<StepRecord> {
     const index = this.steps.length;
     const screenshot = join("screens", `${String(index).padStart(3, "0")}-${action}.png`);
     await this.page.screenshot({ path: join(this.runDir, screenshot) }).catch(() => {});
+    // Order matters: a default-mode snapshot invalidates [ref=eN] markers, so
+    // take it first and the ref snapshot the driver will target last.
+    const aria = await this.page.ariaSnapshot().catch(() => "(snapshot unavailable)");
     const snapshot = await this.snapshot().catch(() => "(snapshot unavailable)");
     const step: StepRecord = {
       index,
@@ -113,6 +136,8 @@ export class BrowserSession {
       consoleErrors: this.pendingConsole.splice(0),
       failedRequests: this.pendingRequests.splice(0),
       snapshot,
+      aria,
+      target,
       at: new Date().toISOString(),
     };
     this.steps.push(step);

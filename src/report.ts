@@ -28,7 +28,7 @@ const COLORS = { pass: "#1a7f37", fail: "#cf222e", inconclusive: "#9a6700" };
 
 export async function writeReport(runDir: string, report: RunReport) {
   // The JSON report omits per-step snapshots; they're bulky and live in the trace.
-  const slim = { ...report, steps: report.steps.map(({ snapshot: _snapshot, ...s }) => s) };
+  const slim = { ...report, steps: report.steps.map(({ snapshot: _snapshot, aria: _aria, ...s }) => s) };
   await writeFile(join(runDir, "report.json"), JSON.stringify(slim, null, 2));
   await writeFile(join(runDir, "report.html"), html(report));
 }
