@@ -134,16 +134,17 @@ That is 14 cases. The eval reports:
 
 Results go to `.witness/evals/<id>/summary.md` and `results.json`, with a link to every run's evidence report.
 
-### Latest results ([full table](docs/eval/2026-11-22.md))
+### Latest results ([3 trials](docs/eval/2026-11-22-trials3.md) · [first run](docs/eval/2026-11-22.md))
 
 | Metric | Result |
 |---|---|
-| Bug catch rate | **8/8 (100%)** |
-| False alarm rate | **0/6 (0%)**, including a harmless UI change |
+| Bug catch rate | **24/24 (100%)** |
+| False alarm rate | **0/18 (0%)**, including a harmless UI change |
+| Same verdict on all 3 trials | **14/14 cases** |
 | No-LLM replay catch rate | **8/8 (100%)**, mean 1.3s per replay |
-| Agent run | mean 47s, 10 browser actions |
+| Agent run | mean 41s, 9.8 browser actions |
 
-These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 1 trial per case.
+These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs in all. Verdicts never varied between trials; only the path did (for example, `clear-all` took 15–18 actions).
 
 Every FAIL verdict named the actual bug, citing specific steps. Examples:
 - *"clicking Delete 'Bravo' removed Charlie and left Bravo"*
@@ -152,7 +153,6 @@ Every FAIL verdict named the actual bug, citing specific steps. Examples:
 
 **Caveats:**
 - The demo bugs are deliberately clear-cut, and the same author wrote both the bugs and the goals.
-- One trial can't show variance. Run `--trials 3` for that.
 - The next step is seeded bugs in a real app, plus subtler bugs such as race conditions and visual-only regressions.
 
 ## Why
