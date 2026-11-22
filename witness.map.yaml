@@ -1,13 +1,13 @@
 # Witness Feature Map: how to reach and operate this app, for testing agents.
 # Regenerate with `witness map`, check for drift with `witness map --check`.
 # Safe to edit and commit. The app is the source of truth.
-generated: 2026-11-22T21:03:04.053Z
+generated: 2026-11-22T21:10:45.924Z
 url: http://localhost:4173
-summary: A simple to-do app. Users add tasks, mark them complete, clear completed tasks, and use a settings page to change delete confirmation and the "items left" counter.
+summary: A simple to-do app where you add, complete, delete and clear tasks. A settings page controls delete confirmation and whether the "items left" counter is shown.
 pages:
   - path: /
     title: Tasks
-    purpose: "Task list: add tasks, see the items-left counter, clear completed tasks"
+    purpose: "Task list: add tasks, view and manage them, clear completed tasks, see the items-left counter"
     controls:
       - link "Settings"
       - textbox "New task"
@@ -15,7 +15,7 @@ pages:
       - button "Clear completed"
   - path: /settings
     title: Settings · Tasks
-    purpose: Settings for delete confirmation and the items-left counter
+    purpose: Toggles for delete confirmation and the items-left counter
     controls:
       - link "Back to tasks"
       - checkbox "Ask for confirmation before deleting a task"
@@ -26,55 +26,60 @@ features:
     how_to_reach:
       - Open /
       - Type in textbox "New task"
-      - Click button "Add"
+      - Click button "Add" (Enter may also submit, but the crawl doesn't confirm it)
     controls:
       - textbox "New task"
       - button "Add"
-    behavior: The task appears in list "Task list", the input clears and the "items left" count goes up by one.
+    behavior: The new task appears in list "Task list" and the "items left" count goes up by one.
     traps:
-      - Reload the page to check that tasks persist. A run on 2026-11-22 found that every added task was gone after a reload or after navigating back, with no console errors (from runs)
-      - The crawl started with an empty list, so the per-task controls (complete toggle, delete) were never seen. Find their names after adding a task
+      - The list starts empty. Per-task controls (complete, delete) only show up once a task exists, and their names aren't in the crawl, so find them after adding a task.
+      - Try adding an empty or whitespace-only task; the crawl doesn't show what should happen.
+      - Reload to check whether tasks persist; the crawl gives no evidence either way.
   - name: Complete and delete tasks
     page: /
     how_to_reach:
       - Add at least one task
-      - Use the per-task controls that then appear in list "Task list"
-    controls: []
+      - Use the per-task controls that appear on each item in list "Task list"
+    controls:
+      - list "Task list"
     behavior: Completing a task should lower the "items left" count. Deleting removes the task from the list.
     traps:
-      - The per-task controls only appear once tasks exist. The crawl did not record their names
-      - Whether deleting asks for confirmation depends on the checkbox "Ask for confirmation before deleting a task" on /settings. It was unchecked in the crawl, so by default deletion should happen without a dialog
+      - Whether deleting asks for confirmation depends on the checkbox "Ask for confirmation before deleting a task" on /settings, which is off by default. With it on, expect a confirmation dialog.
+      - Per-task control names aren't in the crawl, so don't assume them.
   - name: Clear completed tasks
     page: /
     how_to_reach:
       - Add tasks and mark some complete
-      - Click button "Clear completed" in the footer
+      - Click button "Clear completed"
     controls:
       - button "Clear completed"
-    behavior: Removes all completed tasks from the list. Uncompleted tasks stay.
+    behavior: Removes all completed tasks and leaves active ones in place.
     traps:
-      - The button is visible even when the list is empty
-  - name: Items left counter
+      - The button is in the footer (contentinfo) and is visible even when there are no tasks.
+      - Check whether "Ask for confirmation before deleting a task" also affects this button; the crawl doesn't say.
+  - name: Items-left counter
     page: /
     how_to_reach:
-      - Open / and look at the footer text "N items left"
+      - Open /
+      - Look at the footer text "0 items left"
     controls: []
-    behavior: Shows how many tasks are not completed ("0 items left" when empty).
+    behavior: Shows the number of incomplete tasks.
     traps:
-      - Its visibility is controlled by the checkbox "Show the \"items left\" counter" on /settings, which is checked by default
+      - It can be hidden with checkbox "Show the \"items left\" counter" on /settings, which is checked by default.
+      - Check singular/plural wording when exactly 1 task is left.
   - name: Change settings
     page: /settings
     how_to_reach:
       - Click link "Settings" on /
       - Toggle a checkbox
-      - Click link "Back to tasks" to see the effect
+      - Return with link "Back to tasks"
     controls:
       - link "Settings"
       - checkbox "Ask for confirmation before deleting a task"
       - checkbox "Show the \"items left\" counter"
       - link "Back to tasks"
-    behavior: Turning on confirmation makes deletes ask first. Unchecking the counter checkbox hides "items left" on /.
+    behavior: "The settings change behavior on /: delete confirmation and counter visibility. There's an empty status region, which is probably a \"saved\" message after a toggle."
     traps:
-      - The settings take effect on a different page (/)
-      - An empty status region on the page probably shows a save message after a change
-      - Reload to check that settings persist. Tasks did not survive navigation in the 2026-11-22 run, so settings may not either (from runs)
+      - The effects only show on /, so go back to the task page to check them.
+      - Reload to check whether the settings persist; the crawl doesn't show this.
+      - "Defaults: confirmation is unchecked and the counter is checked."

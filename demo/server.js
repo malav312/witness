@@ -38,17 +38,15 @@ for (const bug of enabled) {
   }
 }
 
-const html = readFileSync(join(here, "index.html"), "utf8").replace(
-  "/*__BUGS__*/",
-  `window.__BUGS = ${JSON.stringify(enabled)};`,
-);
-
-const settingsHtml = readFileSync(join(here, "settings.html"), "utf8");
+// Read files on every request, like a dev server, so edits show up on reload.
+const inject = (file) =>
+  readFileSync(join(here, file), "utf8").replace("/*__BUGS__*/", `window.__BUGS = ${JSON.stringify(enabled)};`);
 
 http
   .createServer((req, res) => {
     const path = new URL(req.url ?? "/", "http://x").pathname;
-    const page = { "/": html, "/settings": settingsHtml }[path];
+    const file = { "/": "index.html", "/settings": "settings.html" }[path];
+    const page = file && inject(file);
     if (page) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(page);

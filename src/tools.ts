@@ -81,6 +81,14 @@ export async function runTool(
   }
 
   const target = input.ref ? await session.describe(input.ref) : undefined;
+  if (input.ref && process.env.WITNESS_VIDEO) {
+    // Demo recordings only: briefly outline what's about to be used. It's
+    // removed before the action, so evidence screenshots stay clean.
+    const el = session.page.locator(`aria-ref=${input.ref}`);
+    await el.evaluate((n: HTMLElement) => { n.style.outline = "3px solid #e5534b"; n.style.outlineOffset = "2px"; }).catch(() => {});
+    await session.page.waitForTimeout(700);
+    await el.evaluate((n: HTMLElement) => { n.style.outline = ""; n.style.outlineOffset = ""; }).catch(() => {});
+  }
   const step = await session.act(name, input, async (page) => {
     switch (name) {
       case "click":

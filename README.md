@@ -4,18 +4,62 @@
 
 Witness is a verification harness for coding agents. You give it a goal in plain English and a running web app. It drives the real app in a browser, records everything, and has a separate judge decide from that evidence alone whether the goal is actually met.
 
+![Witness driving the demo app: adds a task, reloads, the task is gone, verdict FAIL](docs/demo.gif)
+
 ```bash
-witness verify "A user can add a task with the Add button and it survives a reload" --url http://localhost:4173
+witness verify "A user can add a task with the Add button and it is still there after reloading the page"
 ```
 
 ```
-FAIL  Tasks are added, but they disappear after reload.
-  ✓ Typing a title and clicking Add shows the task in the list  [#2, #3]
-  ✓ The input clears after adding  [#3]
-  ✗ The task is still there after a page reload  [#5]
+FAIL  Clicking Add does add "Buy milk" and clears the input (step 2), but the task is gone after
+      reloading (step 3 snapshot and screenshot show an empty list and "0 items left"). The same thing
+      happens with Enter and "Walk dog" (steps 4–5), so tasks are not being saved.
+  ✓ Typing a task and clicking the Add button adds it to the task list  [#1, #2]
+  ✓ The input clears after adding  [#2]
+  ✓ The items-left counter updates after adding  [#2]
+  ✗ The added task is still in the list after reloading the page  [#3]
+  ✗ The task persists whether it was added with Add or with Enter (consistency check)  [#4, #5]
 
-evidence: .witness/runs/2026-11-22T.../report.html
+evidence: .witness/runs/2026-11-22T21-14-10-236Z/report.html
 ```
+
+<img src="docs/report.png" alt="Witness evidence report: FAIL verdict, criteria with step citations, what the agent said, and per-step screenshots" width="640">
+
+## For coding agents: MCP server and skill
+
+Witness is built to sit at the end of an agent's own task: the agent changes the code, Witness proves it. It runs as an MCP server:
+
+```bash
+claude mcp add witness -e WITNESS_URL=http://localhost:3000 -- node /path/to/witness/bin/witness.js mcp
+```
+
+| Tool | What it does |
+|---|---|
+| `witness_verify` | Drive the app to exercise a goal and return the judge's verdict, criteria, problems and evidence path. A pass is saved as a replay. |
+| `witness_replay` | Re-check every verified goal with no LLM. `heal: true` re-verifies divergences. |
+| `witness_map` | Build the Feature Map, or `check: true` to detect drift with no LLM. |
+| `witness_replays` | List the verified goals. |
+
+[`skills/witness/SKILL.md`](skills/witness/SKILL.md) is the playbook that goes with it. Copy it to `.claude/skills/witness/` in your project. It tells the agent:
+- when to verify (after any user-facing change, before saying "done")
+- how to write a goal (a user-visible outcome, not "test the add feature")
+- that `fail` and `inconclusive` mean *not done*
+- to run `witness_replay` before finishing
+
+**Test drive.** I gave a fresh headless Claude Code session a copy of the demo app with a real typo bug: tasks saved under `witness-demo-todo` but loaded from `witness-demo-todos`. The prompt was only *"Users report that their tasks disappear after they reload the page… Fix it."* It never mentioned Witness. The session:
+
+```
+→ Glob, Read index.html, Read server.js
+  "The save key is `witness-demo-todo` but load reads `witness-demo-todos`."
+→ Edit index.html
+→ Skill witness                         ← picked the skill up on its own
+→ witness_verify "A user can add a task with the Add button, and after reloading the page the task is still in the list"
+→ witness_replay
+  "Witness: PASS. In a real browser, it added a task with the Add button, reloaded the page, and the task was
+   still in the list. All 6 checks passed, with no console errors. Evidence: .witness/runs/…/report.html"
+```
+
+It also raised something on its own: tasks users saved under the old key won't come back by themselves, and it offered to migrate them.
 
 ## Replay: verify once with an agent, re-check for free
 
@@ -150,10 +194,13 @@ Demo bugs (`demo/server.js`): `no-persist`, `dead-add`, `count-off`, `delete-wro
 
 Exit codes: `0` pass, `1` fail, `2` inconclusive, `3` error, so it can gate CI or an agent's "done".
 
+`WITNESS_VIDEO=<dir>` records the browser session for demos (that's how `docs/demo.gif` was made). It briefly outlines each element before it's used, and removes the outline before the evidence screenshot.
+
 No-LLM tests, run with `npm test`:
 - `test/browser-smoke.ts`: the browser and evidence layer
 - `test/replay-smoke.ts`: replay matches the clean app and diverges at the right step on each bug
 - `test/map-smoke.ts`: the crawl and drift check
+- `test/mcp-smoke.ts`: a real MCP client over stdio lists the tools and calls the ones that need no LLM
 
 ## Roadmap
 
@@ -161,7 +208,7 @@ No-LLM tests, run with `npm test`:
 - [x] Claude Code backend: run on a Claude subscription, with the browser tools served over MCP
 - [x] Replay: passing runs re-run without an LLM, `--heal` calls the model only when a replay diverges, and export to Playwright tests
 - [x] Mapper: crawl the app into a Feature Map (`witness.map.yaml`) that the Driver reads first, with `--check` for drift
-- [ ] Standalone MCP server and skill, so Claude Code, Cursor and others can call `witness_verify` directly
+- [x] Standalone MCP server (`witness mcp`) and a Claude Code skill, so agents can verify their own work
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [ ] `witness refresh` and a GitHub Action
 

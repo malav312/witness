@@ -46,7 +46,13 @@ export class BrowserSession {
     await mkdir(join(this.runDir, "screens"), { recursive: true });
     this.browser = await chromium.launch({ headless: !this.opts.headed });
     // Fresh context per run: no cookies or localStorage leak between runs.
-    this.context = await this.browser.newContext({ viewport: { width: 1280, height: 800 } });
+    // WITNESS_VIDEO=<dir> records the session (for demos); off by default.
+    const video = process.env.WITNESS_VIDEO;
+    const viewport = video ? { width: 640, height: 400 } : { width: 1280, height: 800 };
+    this.context = await this.browser.newContext({
+      viewport,
+      ...(video ? { recordVideo: { dir: video, size: viewport } } : {}),
+    });
     await this.context.tracing.start({ screenshots: true, snapshots: true });
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(5000);

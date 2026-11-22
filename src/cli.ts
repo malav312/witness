@@ -25,6 +25,7 @@ Usage:
   witness export [name...] [--dir d]  Write replays as plain Playwright tests.
   witness map [--check]               Crawl the app into a Feature Map (${MAP_FILE}),
                                       or report drift from the saved one (no LLM).
+  witness mcp                         Serve Witness as an MCP server on stdio, for coding agents.
 
 Options:
   --url <url>         App to open (default: $WITNESS_URL or http://localhost:4173)
@@ -212,6 +213,11 @@ async function main() {
   if (command === "replay") return replay(rest, values);
   if (command === "export") return exportSpecs(rest, values);
   if (command === "map") return map(values);
+  if (command === "mcp") {
+    const { serveMcp } = await import("./mcp-server.js");
+    await serveMcp();
+    return new Promise<number>(() => {}); // serve until the client disconnects
+  }
   console.log(HELP);
   return 3;
 }
