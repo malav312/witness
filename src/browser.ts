@@ -1,0 +1,126 @@
+// A Playwright session that records everything as evidence.
+// The driver acts through this; the judge only ever sees what it recorded.
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+
+export interface StepRecord {
+  index: number;
+  action: string;
+  input: Record<string, unknown>;
+  ok: boolean;
+  result: string;
+  url: string;
+  screenshot: string; // path relative to the run directory
+  consoleErrors: string[]; // new since the previous step
+  failedRequests: string[]; // new since the previous step
+  snapshot: string; // accessibility tree after the step
+  at: string;
+}
+
+export class BrowserSession {
+  private browser!: Browser;
+  private context!: BrowserContext;
+  page!: Page;
+  readonly steps: StepRecord[] = [];
+  readonly allConsoleErrors: string[] = [];
+  readonly allFailedRequests: string[] = [];
+  private pendingConsole: string[] = [];
+  private pendingRequests: string[] = [];
+
+  constructor(
+    private readonly runDir: string,
+    private readonly opts: { headed?: boolean } = {},
+  ) {}
+
+  async start(url: string) {
+    await mkdir(join(this.runDir, "screens"), { recursive: true });
+    this.browser = await chromium.launch({ headless: !this.opts.headed });
+    // Fresh context per run: no cookies or localStorage leak between runs.
+    this.context = await this.browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await this.context.tracing.start({ screenshots: true, snapshots: true });
+    this.page = await this.context.newPage();
+    this.page.setDefaultTimeout(5000);
+
+    this.page.on("console", (msg) => {
+      if (msg.type() === "error") this.recordConsole(`console.error: ${msg.text()}`);
+    });
+    this.page.on("pageerror", (err) => this.recordConsole(`uncaught: ${err.message}`));
+    this.page.on("requestfailed", (req) =>
+      this.recordRequest(`${req.method()} ${req.url()} failed: ${req.failure()?.errorText}`),
+    );
+    this.page.on("response", (res) => {
+      if (res.status() >= 400) this.recordRequest(`${res.request().method()} ${res.url()} -> ${res.status()}`);
+    });
+
+    await this.page.goto(url);
+    return this.record("navigate", { url }, true, `Opened ${url}`);
+  }
+
+  private recordConsole(line: string) {
+    this.pendingConsole.push(line);
+    this.allConsoleErrors.push(line);
+  }
+
+  private recordRequest(line: string) {
+    this.pendingRequests.push(line);
+    this.allFailedRequests.push(line);
+  }
+
+  /** Accessibility snapshot with [ref=eN] markers the driver can target. */
+  async snapshot(): Promise<string> {
+    return this.page.ariaSnapshot({ mode: "ai" });
+  }
+
+  /** Run one action, then screenshot and log it, whether it succeeded or not. */
+  async act(
+    action: string,
+    input: Record<string, unknown>,
+    fn: (page: Page) => Promise<string | void>,
+  ): Promise<StepRecord> {
+    let ok = true;
+    let result: string;
+    try {
+      result = (await fn(this.page)) ?? "done";
+      // Let handlers, re-renders and async errors land before we look.
+      await this.page.waitForLoadState("domcontentloaded");
+      await this.page.waitForTimeout(250);
+    } catch (err) {
+      ok = false;
+      result = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    }
+    return this.record(action, input, ok, result);
+  }
+
+  private async record(
+    action: string,
+    input: Record<string, unknown>,
+    ok: boolean,
+    result: string,
+  ): Promise<StepRecord> {
+    const index = this.steps.length;
+    const screenshot = join("screens", `${String(index).padStart(3, "0")}-${action}.png`);
+    await this.page.screenshot({ path: join(this.runDir, screenshot) }).catch(() => {});
+    const snapshot = await this.snapshot().catch(() => "(snapshot unavailable)");
+    const step: StepRecord = {
+      index,
+      action,
+      input,
+      ok,
+      result,
+      url: this.page.url(),
+      screenshot,
+      consoleErrors: this.pendingConsole.splice(0),
+      failedRequests: this.pendingRequests.splice(0),
+      snapshot,
+      at: new Date().toISOString(),
+    };
+    this.steps.push(step);
+    return step;
+  }
+
+  async stop() {
+    await this.context.tracing.stop({ path: join(this.runDir, "trace.zip") }).catch(() => {});
+    await this.browser.close();
+  }
+}

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tasks</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; max-width: 480px; margin: 48px auto; color: #222; }
+      h1 { font-size: 28px; margin-bottom: 16px; }
+      form { display: flex; gap: 8px; }
+      input[type="text"] { flex: 1; padding: 8px; font-size: 16px; }
+      button { padding: 8px 12px; font-size: 14px; cursor: pointer; }
+      ul { list-style: none; padding: 0; }
+      li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #eee; }
+      li.done span { text-decoration: line-through; color: #999; }
+      li span { flex: 1; }
+      footer { display: flex; justify-content: space-between; margin-top: 12px; color: #666; font-size: 14px; }
+    </style>
+    <script>/*__BUGS__*/</script>
+  </head>
+  <body>
+    <h1>Tasks</h1>
+    <form id="new">
+      <input id="title" type="text" aria-label="New task" placeholder="What needs doing?" autocomplete="off" />
+      <button id="add" type="button">Add</button>
+    </form>
+    <ul id="list" aria-label="Task list"></ul>
+    <footer>
+      <span id="count" aria-live="polite"></span>
+      <button id="clear" type="button">Clear completed</button>
+    </footer>
+
+    <script>
+      const bug = (name) => window.__BUGS.includes(name);
+      const KEY = "witness-demo-todos";
+      let todos = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+      let nextId = todos.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+
+      const save = () => {
+        if (!bug("no-persist")) localStorage.setItem(KEY, JSON.stringify(todos));
+      };
+
+      function render() {
+        const list = document.getElementById("list");
+        list.innerHTML = "";
+        todos.forEach((t, i) => {
+          const li = document.createElement("li");
+          if (t.done) li.className = "done";
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.checked = t.done;
+          box.setAttribute("aria-label", `Mark "${t.title}" done`);
+          box.onchange = () => {
+            if (!bug("toggle-noop")) t.done = box.checked;
+            save();
+            render();
+          };
+          const span = document.createElement("span");
+          span.textContent = t.title;
+          const del = document.createElement("button");
+          del.textContent = "Delete";
+          del.setAttribute("aria-label", `Delete "${t.title}"`);
+          del.onclick = () => {
+            const idx = bug("delete-wrong") ? Math.min(i + 1, todos.length - 1) : i;
+            todos.splice(idx, 1);
+            save();
+            render();
+          };
+          li.append(box, span, del);
+          list.append(li);
+        });
+        const left = todos.filter((t) => !t.done).length + (bug("count-off") ? 1 : 0);
+        document.getElementById("count").textContent = `${left} item${left === 1 ? "" : "s"} left`;
+      }
+
+      function add() {
+        const input = document.getElementById("title");
+        const title = input.value.trim();
+        if (!title && !bug("empty-allowed")) return;
+        todos.push({ id: nextId++, title, done: false });
+        input.value = "";
+        save();
+        render();
+        if (bug("console-error")) setTimeout(() => { throw new Error("analytics: track() is not a function"); });
+      }
+
+      document.getElementById("add").onclick = () => { if (!bug("dead-add")) add(); };
+      document.getElementById("new").onsubmit = (e) => { e.preventDefault(); add(); };
+      document.getElementById("title").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); add(); }
+      });
+      document.getElementById("clear").onclick = () => {
+        todos = bug("clear-all") ? [] : todos.filter((t) => !t.done);
+        save();
+        render();
+      };
+      render();
+    </script>
+  </body>
+</html>
