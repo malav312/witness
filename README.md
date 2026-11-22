@@ -45,6 +45,27 @@ The model is used only when something actually changed.
 
 Replays find elements by role and accessible name (`getByRole("button", { name: "Add" })`), not CSS selectors, so they survive markup refactors. `witness export` turns each one into a standalone `@playwright/test` spec using `toMatchAriaSnapshot`, so you can run it in any CI without Witness.
 
+## Eval: does it actually catch bugs?
+
+```bash
+npm run eval                                 # all cases
+npm run eval -- --only add-persist,delete    # some goals
+npm run eval -- --trials 3                   # repeat each case to measure variance
+```
+
+There are 5 goals (in `eval/cases.ts`), and each runs against 3 kinds of app:
+- the clean demo app, where it should pass
+- each bug that breaks the goal, where it should fail
+- a harmless UI change, where it should still pass
+
+That is 14 cases. The eval reports:
+- **bug catch rate**
+- **false alarm rate**
+- accuracy, time and tokens
+- **replay catch rate**: each passing clean recording replayed against every variant with no LLM
+
+Results go to `.witness/evals/<id>/summary.md` and `results.json`, with a link to every run's evidence report.
+
 ## Why
 
 Coding agents report success when the code compiles or the tests they wrote pass. Witness makes "done" mean *evidence*: screenshots, console errors, failed requests and a replayable trace, judged by a model that never saw the agent's reasoning.
@@ -92,7 +113,7 @@ No-LLM tests: `npx tsx test/browser-smoke.ts` (browser and evidence layer) and `
 - [x] Replay: passing runs re-run without an LLM, `--heal` calls the model only when a replay diverges, and export to Playwright tests
 - [ ] Mapper: crawl an app into a Feature Map (`.witness/map.yaml`) the driver reads first
 - [ ] Standalone MCP server and skill, so Claude Code, Cursor and others can call `witness_verify` directly
-- [ ] Eval: catch rate and false-positive rate across every demo bug
+- [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [ ] `witness refresh` and a GitHub Action
 
 Inspired by Lauren Tan's ([@potetotes](https://x.com/potetotes)) "verification is infrastructure" approach to agent harnesses.

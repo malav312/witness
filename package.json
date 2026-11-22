@@ -10,7 +10,9 @@
   "scripts": {
     "demo": "node demo/server.js",
     "witness": "tsx src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval": "tsx eval/run.ts",
+    "test": "tsx test/browser-smoke.ts && tsx test/replay-smoke.ts"
   },
   "engines": {
     "node": ">=22"
