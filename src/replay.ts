@@ -9,7 +9,6 @@ import type { Page } from "playwright";
 import { BrowserSession, type StepRecord, type Target } from "./browser.js";
 import { gitInfo, provenance, type Provenance } from "./provenance.js";
 import type { RunReport } from "./report.js";
-import { resolveSecrets } from "./secrets.js";
 
 export interface ReplayStep {
   action: "open" | "click" | "type" | "select_option" | "click_at" | "press" | "navigate" | "reload";
@@ -249,7 +248,7 @@ function collapse(lines: string[], context = 3): string {
 export const nameWithLiveNumbers = (name: string) =>
   new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\d+(?:[.,:]\d+)*/g, "\\d+(?:[.,:]\\d+)*")}$`);
 
-async function perform(page: Page, step: ReplayStep, baseUrl: string): Promise<string> {
+async function perform(session: BrowserSession, page: Page, step: ReplayStep, baseUrl: string): Promise<string> {
   // Exact name first; if that's gone and the name has numbers in it, match it with the numbers as wildcards.
   const locate = async () => {
     const t = step.target!;
@@ -268,7 +267,7 @@ async function perform(page: Page, step: ReplayStep, baseUrl: string): Promise<s
     case "type": {
       const el = await locate();
       if ((await el.count()) === 0) throw new Error(`${describeTarget(step.target)} not found`);
-      await el.first().fill(resolveSecrets(step.text ?? ""));
+      await session.fill(el.first(), step.text ?? "");
       if (step.submit) await el.first().press("Enter");
       return `Typed ${JSON.stringify(step.text)}`;
     }
@@ -285,7 +284,7 @@ async function perform(page: Page, step: ReplayStep, baseUrl: string): Promise<s
       await page.keyboard.press(step.key!);
       return `Pressed ${step.key}`;
     case "navigate":
-      await page.goto(new URL(step.path!, baseUrl).href);
+      await session.goto(new URL(step.path!, baseUrl).href);
       return `Navigated to ${step.path}`;
     case "reload":
       await page.reload();
@@ -321,7 +320,7 @@ export async function runReplay(
       const rec =
         step.action === "open"
           ? await session.start(new URL(step.path!, opts.url).href)
-          : await session.act(step.action, { ...step, expect: undefined }, (page) => perform(page, step, opts.url), step.target);
+          : await session.act(step.action, { ...step, expect: undefined }, (page) => perform(session, page, step, opts.url), step.target);
 
       let divergence: Divergence | undefined;
       if (!rec.ok) {

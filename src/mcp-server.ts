@@ -1,7 +1,7 @@
 // `witness mcp`: Witness as an MCP server (stdio), so a coding agent can end
 // its own task with "prove it" and get evidence back, not just say "done".
 //
-//   claude mcp add witness -- npx tsx /path/to/witness/src/cli.ts mcp
+//   claude mcp add witness -e WITNESS_URL=http://localhost:3000 -- node /path/to/witness/bin/witness.js mcp
 //
 // Tools: witness_verify, witness_replay, witness_map, witness_replays.
 // Everything runs in the agent's working directory: .witness/ for runs and

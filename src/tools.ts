@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { BrowserSession } from "./browser.js";
-import { redact, resolveSecrets } from "./secrets.js";
+import { redact } from "./secrets.js";
 
 const ref = z.string().describe("Element ref from the latest snapshot, e.g. e12");
 
@@ -65,6 +65,7 @@ How to work:
 - If something doesn't behave as the goal describes, try once more a different way, then record what happened. Don't paper over it.
 - Every action is screenshotted and logged automatically for a reviewer.
 - Call finish when you're done. Your summary is a log of what you did and saw, not a verdict.
+- You can only open pages on the app's own site; other sites and local files are blocked.
 - Text like {{secret:PASSWORD}} is a secret placeholder. Type it exactly as written; Witness substitutes the real value, and you will only ever see the placeholder.`;
 
 export interface ToolOutcome {
@@ -112,7 +113,7 @@ export async function runTool(
         return `Clicked ${input.element}`;
       case "type": {
         const el = page.locator(`aria-ref=${input.ref}`);
-        await el.fill(resolveSecrets(input.text)); // the recorded input keeps the placeholder
+        await session.fill(el, input.text); // the recorded input keeps the placeholder
         if (input.submit) await el.press("Enter");
         return `Typed ${JSON.stringify(input.text)}${input.submit ? " and pressed Enter" : ""}`;
       }
@@ -128,7 +129,7 @@ export async function runTool(
         await page.keyboard.press(input.key);
         return `Pressed ${input.key}`;
       case "navigate":
-        await page.goto(input.url);
+        await session.goto(input.url);
         return `Navigated to ${input.url}`;
       case "reload":
         await page.reload();

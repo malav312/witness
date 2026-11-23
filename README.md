@@ -70,7 +70,7 @@ Two agent sessions used Witness to fix four real open issues:
 
 Witness reproduced each bug as a FAIL before the fix. After the fix it gave PASS on three of them. On the fourth, #3051, it gave a false FAIL, because the Driver had no way to click empty space.
 
-Those runs also exposed what breaks on real apps. All of these are fixed now, and each fix is checked again on the live Uptime Kuma instance:
+Those runs also exposed what breaks on real apps. All of these are fixed now. Secrets, saved logins, live-data replays and build tracking were re-checked on the live Uptime Kuma instance; the new browser tools are covered by the automated tests, and #3051 hasn't been re-run with `click_at` yet:
 
 | Found on a real app | Fix |
 |---|---|
@@ -99,6 +99,7 @@ witness verify "Signed in, a user can create an MQTT monitor and it is still lis
 - **The Playwright trace is skipped** while secrets are configured, since it stores raw DOM values.
 - **Exported tests** read secrets from `WITNESS_SECRET_*` at run time.
 - **`witness auth`** keeps the login only if the Judge confirms you're signed in. The cookies go to `.witness/auth.json`, which is gitignored. Use `--no-auth` to ignore it.
+- **The browser stays on the app.** Pages load only from the app's origin. Navigating elsewhere, following an off-site link or opening a local `file://` path is blocked and recorded as a failed step, so text in the app under test can't steer the Driver somewhere else. Secrets are typed only into fields on allowed origins. If login goes through another site, such as an identity provider, list it: `WITNESS_ALLOWED_ORIGINS=https://login.example.com`.
 
 ## What was tested
 
@@ -202,7 +203,7 @@ Results go to `.witness/evals/<id>/summary.md` and `results.json`, with a link t
 | No-LLM replay catch rate | **8/8 (100%)**, mean 1.3s per replay |
 | Agent run | mean 41s, 9.8 browser actions |
 
-These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs in all. Verdicts never varied between trials; only the path did (for example, `clear-all` took 15–18 actions).
+These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs in all. They were measured before the real-app fixes added the `select_option` and `click_at` tools and changed the Driver's instructions, so a re-run on the current Driver is due. Verdicts never varied between trials; only the path did (for example, `clear-all` took 15–18 actions).
 
 Every FAIL verdict named the actual bug, citing specific steps. Examples:
 - *"clicking Delete 'Bravo' removed Charlie and left Bravo"*
@@ -222,7 +223,7 @@ Coding agents report success when the code compiles or the tests they wrote pass
 | Piece | What it does |
 |---|---|
 | **Driver** (`src/driver.ts`) | Claude agent loop with browser tools (snapshot, click, type, select_option, click_at, press, navigate, reload, screenshot). It exercises the goal like a user would and reports what it did, not whether it worked. |
-| **Evidence** (`src/browser.ts`) | Every action gets a screenshot, the accessibility tree afterwards, new console errors, failed requests and dialogs. Dialogs are accepted the way a user would, and their text is kept. The whole run is captured as a Playwright trace. |
+| **Evidence** (`src/browser.ts`) | Every action gets a screenshot, the accessibility tree afterwards, new console errors, failed requests and dialogs. Dialogs are accepted the way a user would, and their text is kept. The whole run is captured as a Playwright trace, unless secrets are configured. |
 | **Judge** (`src/judge.ts`) | A separate model call that sees only the evidence. It breaks the goal into criteria, cites step numbers for each, and returns `pass` / `fail` / `inconclusive`. Missing evidence is never a pass. |
 | **Mapper** (`src/map.ts`) | Crawls the app into a Feature Map for the Driver, and detects drift with no LLM. |
 | **Replay** (`src/replay.ts`) | Saves passing runs as role/name-targeted steps with expected aria snapshots; replays them with a line diff on divergence; exports Playwright specs. |
@@ -260,6 +261,8 @@ No-LLM tests, run with `npm test`:
 - `test/map-smoke.ts`: the crawl and drift check
 - `test/mcp-smoke.ts`: a real MCP client over stdio lists the tools and calls the ones that need no LLM
 - `test/gaps-smoke.ts`: secrets, select_option, click_at, saved logins, live-data masking, unique replay names, and aborted runs
+- `test/provenance-smoke.ts`: what was tested, including the stale-build warning after a checkout without a rebuild
+- `test/guard-smoke.ts`: the browser can't leave the app's origin, and secrets aren't typed into other origins
 
 ## Roadmap
 
@@ -269,7 +272,11 @@ No-LLM tests, run with `npm test`:
 - [x] Mapper: crawl the app into a Feature Map (`witness.map.yaml`) that the Driver reads first, with `--check` for drift
 - [x] Standalone MCP server (`witness mcp`) and a Claude Code skill, so agents can verify their own work
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
-- [ ] `witness refresh` and a GitHub Action
+- [x] What was tested: commit, build fingerprint and stale-build warnings
+- [ ] Install from npm (`npx witness`)
+- [ ] A GitHub Action: free replays on every PR, the model only on divergence
+- [ ] A Copilot backend, so CI can run on Copilot with no extra keys
+- [ ] Re-run the eval on the current Driver
 
 Inspired by Lauren Tan's ([@poteto](https://github.com/poteto)) "verification is infrastructure" approach to agent harnesses.
 

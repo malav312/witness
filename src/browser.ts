@@ -4,7 +4,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fingerprintOf, sha256, type BuildInfo, type ScriptInfo } from "./provenance.js";
-import { loadSecrets, redactDeep } from "./secrets.js";
+import { hasSecrets, loadSecrets, redactDeep, resolveSecrets } from "./secrets.js";
+import type { Locator } from "playwright";
 
 /**
  * Parse the first node of an aria snapshot line, e.g. `- button "Add" [ref=e5]`.
@@ -25,6 +26,21 @@ export function parseAriaNode(line: string): Target | undefined {
   }
   const m = body.match(/^([a-z][\w-]*)(?: ("(?:[^"\\]|\\.)*"))?/i);
   return m ? { role: m[1], name: m[2] ? JSON.parse(m[2]) : "" } : undefined;
+}
+
+/**
+ * Origins the browser may load pages from: the app's own, plus any listed in
+ * WITNESS_ALLOWED_ORIGINS (comma-separated, e.g. an identity provider for login).
+ * Everything else is blocked, so text in the app under test can't steer the
+ * Driver to local files or other sites, and secrets are only typed where allowed.
+ */
+export function allowedOrigins(appUrl: string): Set<string> {
+  const extra = (process.env.WITNESS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((o) => new URL(o).origin);
+  return new Set([new URL(appUrl).origin, ...extra]);
 }
 
 export interface Target {
@@ -65,6 +81,8 @@ export class BrowserSession {
   private scripts = new Map<string, Promise<ScriptInfo | undefined>>();
   private firstPageScripts = new Set<string>();
   private firstPageLoaded = false;
+  private allowed = new Set<string>();
+  private blocked: string[] = [];
 
   constructor(
     private readonly runDir: string,
@@ -88,6 +106,16 @@ export class BrowserSession {
     // values, and can't be redacted afterwards. With secrets configured, skip it.
     this.tracing = loadSecrets().size === 0;
     if (this.tracing) await this.context.tracing.start({ screenshots: true, snapshots: true });
+    this.allowed = allowedOrigins(url);
+    // Block page loads (top-level or in frames) from anywhere else.
+    await this.context.route("**/*", (route) => {
+      const req = route.request();
+      if (req.isNavigationRequest() && !this.isAllowed(req.url())) {
+        this.blocked.push(req.url());
+        return route.abort("blockedbyclient");
+      }
+      return route.continue();
+    });
     this.page = await this.context.newPage();
     this.page.setDefaultTimeout(5000);
 
@@ -113,6 +141,37 @@ export class BrowserSession {
     await this.page.goto(url);
     this.firstPageLoaded = true;
     return this.record("navigate", { url }, true, `Opened ${url}`);
+  }
+
+  /** True for http(s) URLs on an allowed origin. */
+  isAllowed(url: string): boolean {
+    try {
+      const u = new URL(url);
+      return (u.protocol === "http:" || u.protocol === "https:") && this.allowed.has(u.origin);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Navigate within the app; refuses other origins and non-http(s) URLs. */
+  async goto(url: string) {
+    const target = new URL(url, this.page.url()).href;
+    if (!this.isAllowed(target)) {
+      throw new Error(
+        `Blocked: ${new URL(target).protocol.startsWith("http") ? new URL(target).origin : target} is outside the app. ` +
+          `Only ${[...this.allowed].join(", ")} can be opened (add origins with WITNESS_ALLOWED_ORIGINS).`,
+      );
+    }
+    return this.page.goto(target);
+  }
+
+  /** Fill a field, substituting {{secret:NAME}} only if the field is on an allowed origin. */
+  async fill(el: Locator, text: string) {
+    if (hasSecrets(text)) {
+      const origin = await el.evaluate(() => location.origin);
+      if (!this.allowed.has(origin)) throw new Error(`Refused to type a secret into a field on ${origin}, which is outside the app`);
+    }
+    await el.fill(resolveSecrets(text));
   }
 
   private recordScript(res: import("playwright").Response) {
@@ -191,6 +250,14 @@ export class BrowserSession {
     } catch (err) {
       ok = false;
       result = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    }
+    // A link or script tried to leave the app: the load was blocked. If the
+    // page is now Chrome's error page, go back so the run can continue.
+    const blocked = this.blocked.splice(0);
+    if (blocked.length) {
+      if (!this.isAllowed(this.page.url())) await this.page.goBack().catch(() => {});
+      ok = false;
+      result = `Blocked a page load outside the app (${blocked.map((u) => (u.startsWith("http") ? new URL(u).origin : u.slice(0, 40))).join(", ")}); stayed on ${this.page.url()}`;
     }
     return this.record(action, input, ok, result, target);
   }
