@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { StepRecord } from "./browser.js";
 import type { DriverResult } from "./driver.js";
 import type { Verdict } from "./judge.js";
+import { provenanceLine, type Provenance } from "./provenance.js";
 
 export interface RunReport {
   id: string;
@@ -15,6 +16,8 @@ export interface RunReport {
   durationMs: number;
   driver: { status: DriverResult["status"]; summary: string };
   verdict: Verdict;
+  /** Which code and build were tested. Older reports don't have it. */
+  provenance?: Provenance;
   steps: StepRecord[];
   consoleErrors: string[];
   failedRequests: string[];
@@ -31,6 +34,21 @@ export async function writeReport(runDir: string, report: RunReport) {
   const slim = { ...report, steps: report.steps.map(({ snapshot: _snapshot, aria: _aria, ...s }) => s) };
   await writeFile(join(runDir, "report.json"), JSON.stringify(slim, null, 2));
   await writeFile(join(runDir, "report.html"), html(report));
+}
+
+function tested(p?: Provenance): string {
+  if (!p) return "";
+  const warn = p.warnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
+  const dirty = p.git?.dirty.length
+    ? `<div class="note">Uncommitted: ${p.git.dirty.slice(0, 10).map(esc).join(", ")}${p.git.dirty.length > 10 ? ` and ${p.git.dirty.length - 10} more` : ""}</div>`
+    : "";
+  const scripts = p.build.scripts
+    .map((s) => `<li><code>${esc(s.url)}</code> ${s.sha256.slice(0, 12)} · ${s.bytes} bytes${s.lastModified ? ` · modified ${esc(s.lastModified)}` : ""}${s.fromServiceWorker ? " · from service worker" : ""}</li>`)
+    .join("");
+  return `<h2>What was tested</h2>${warn}
+<p>${esc(provenanceLine(p))}</p>${dirty}
+<details><summary>Scripts the browser loaded</summary><ul class="note">${scripts || "<li>none</li>"}</ul></details>
+<p class="note">Witness starts every run in a fresh browser. A browser you already had open may still run an older build: hard-reload it (Cmd/Ctrl+Shift+R).</p>`;
 }
 
 function html(r: RunReport): string {
@@ -63,6 +81,7 @@ h1{font-size:20px;margin:12px 0 4px} .meta{color:#656d76}
 table{border-collapse:collapse;width:100%;margin:16px 0} td{padding:8px;border-top:1px solid #d0d7de;vertical-align:top}
 tr.met td:first-child{color:${COLORS.pass}} tr.not_met td:first-child{color:${COLORS.fail}} tr.not_tested td:first-child{color:${COLORS.inconclusive}}
 .note{color:#656d76;font-size:13px} .bad{color:${COLORS.fail};font-family:ui-monospace,monospace;font-size:12px}
+.warn{background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;padding:8px 12px;margin:8px 0}
 .claim{background:#f6f8fa;border-left:3px solid #d0d7de;padding:8px 12px;color:#656d76}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 figure{margin:0;border:1px solid #d0d7de;border-radius:6px;overflow:hidden} figure.err{border-color:${COLORS.fail}}
@@ -74,6 +93,7 @@ figure img{width:100%;display:block;border-bottom:1px solid #d0d7de} figcaption{
 <p>${esc(v.summary)}</p>
 <table>${criteria}</table>
 ${v.problems.length ? `<h2>Problems observed</h2><ul>${v.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+${tested(r.provenance)}
 <h2>What the agent said</h2>
 <div class="claim">${esc(r.driver.summary)}<br><small>Driver status: ${esc(r.driver.status)}. Not used by the judge.</small></div>
 <h2>Evidence</h2>

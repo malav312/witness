@@ -15,6 +15,7 @@ import type { Backend } from "./driver.js";
 import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
 import type { RunReport } from "./report.js";
 import { loadReplays, replayFromRun, rerecord, runReplay, saveReplay } from "./replay.js";
+import { provenanceLine } from "./provenance.js";
 import { SECRETS_FILE } from "./secrets.js";
 import { AUTH_FILE, defaultStorageState, newRunDir, runVerify } from "./verify.js";
 
@@ -40,6 +41,9 @@ function formatVerdict(report: RunReport, runDir: string, replayFile?: string): 
       (c) => `${mark[c.status]} ${c.criterion}${c.evidence_steps.length ? ` [steps ${c.evidence_steps.join(", ")}]` : ""}${c.note ? `: ${c.note}` : ""}`,
     ),
     ...(v.problems.length ? ["", "Problems:", ...v.problems.map((p) => `- ${p}`)] : []),
+    ...(report.provenance
+      ? ["", `Tested: ${provenanceLine(report.provenance)}`, ...report.provenance.warnings.map((w) => `WARNING: ${w}`)]
+      : []),
     "",
     `Evidence report: ${rel(join(runDir, "report.html"))} (screenshots in ${rel(join(runDir, "screens"))}/)`,
     ...(replayFile ? [`Saved as replay: ${rel(replayFile)}. Re-check later with witness_replay, no LLM needed.`] : []),
@@ -99,6 +103,8 @@ export async function serveMcp() {
           summary: report.verdict.summary,
           criteria: report.verdict.criteria,
           problems: report.verdict.problems,
+          tested: report.provenance ? provenanceLine(report.provenance) : null,
+          warnings: report.provenance?.warnings ?? [],
           report: rel(join(runDir, "report.html")),
           replay: replayFile ? rel(replayFile) : null,
         });
@@ -131,14 +137,17 @@ export async function serveMcp() {
         for (const { replay: r } of replays) {
           const { runDir } = await newRunDir(OUT, `-replay-${r.name}`);
           const res = await runReplay(r, { url: urlOr(url), runDir, storageState: defaultStorageState() });
+          const warnings = res.provenance?.warnings ?? [];
           if (res.status === "match") {
-            lines.push(`✓ ${r.name}: ${res.steps} steps match (${(res.durationMs / 1000).toFixed(1)}s)`);
-            results.push({ name: r.name, status: "match" });
+            lines.push(`✓ ${r.name}: ${res.steps} steps match (${(res.durationMs / 1000).toFixed(1)}s)`, ...warnings.map((w) => `    WARNING: ${w}`));
+            results.push({ name: r.name, status: "match", warnings });
             continue;
           }
           const d = res.divergence!;
           lines.push(`✗ ${r.name}: diverged at step ${d.step} (${d.action}): ${d.reason}`);
           if (d.diff) lines.push(d.diff.replace(/^/gm, "    "));
+          if (res.sameBuild === true) lines.push("    Same JavaScript build as when recorded: the difference comes from data, the backend or the environment, not the frontend code.");
+          lines.push(...warnings.map((w) => `    WARNING: ${w}`));
           if (d.numbersOnly && !heal) lines.push("    Only numbers changed (likely live data). heal=true re-verifies and learns these lines as volatile.");
           if (!heal) {
             regressions++;

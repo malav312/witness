@@ -36,6 +36,8 @@ Don't use it for pure refactors with no behavior change (use `witness_replay` fo
    - `fail`: not done. Read `problems` and the `not_met` criteria. They cite step numbers and usually point at the cause. Fix the code, then verify again with the same goal.
    - `inconclusive`: not done. Usually the goal was too vague or a criterion wasn't exercised. Make the goal more specific and verify again.
 
+   Check the `Tested:` line too. If it warns that the app may be serving an old build, rebuild or restart the app and verify again: the verdict may be about different code.
+
    Never describe a `fail` or `inconclusive` result as working. If you can't get to `pass`, tell the user what Witness found.
 
 6. **Before you finish, call `witness_replay`** to re-check previously verified behavior. It takes about a second per replay and needs no LLM. If one diverges:

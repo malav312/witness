@@ -6,6 +6,7 @@ import { BrowserSession } from "./browser.js";
 import { MODEL } from "./claude.js";
 import { drive, type Backend, type DriverResult } from "./driver.js";
 import { judge, type Verdict } from "./judge.js";
+import { gitInfo, provenance, provenanceLine, type BuildInfo } from "./provenance.js";
 import { writeReport, type RunReport } from "./report.js";
 import { redact } from "./secrets.js";
 
@@ -56,6 +57,7 @@ export async function runVerify(goal: string, opts: VerifyOptions): Promise<{ re
   const stateTmp = join(runDir, "auth-state.json");
   let driven: DriverResult;
   let aborted: string | undefined;
+  let build: BuildInfo = { fingerprint: "none", scripts: [], serviceWorker: false };
   try {
     await session.start(opts.url);
     driven = await drive(session, runDir, goal, { backend: opts.backend, maxSteps: opts.maxSteps, map: opts.map, log });
@@ -66,9 +68,14 @@ export async function runVerify(goal: string, opts: VerifyOptions): Promise<{ re
     log(`  run aborted: ${aborted}`);
     driven = { status: "blocked", summary: `Run aborted: ${aborted}`, steps: session.steps, usage: { input: 0, output: 0 } };
   } finally {
+    build = await session.build().catch(() => build);
     if (opts.saveStateTo && !aborted) await session.saveState(stateTmp).catch(() => {});
     await session.stop().catch(() => {});
   }
+
+  const tested = provenance(build, gitInfo(), opts.url);
+  log(`  tested: ${provenanceLine(tested)}`);
+  for (const w of tested.warnings) log(`  ⚠ ${w}`);
 
   let verdict: Verdict;
   let judgeUsage = { input: 0, output: 0 };
@@ -111,6 +118,7 @@ export async function runVerify(goal: string, opts: VerifyOptions): Promise<{ re
     durationMs: Date.now() - startedAt.getTime(),
     driver: { status: driven.status, summary: redact(driven.summary) },
     verdict,
+    provenance: tested,
     steps: driven.steps,
     consoleErrors: session.allConsoleErrors.map(redact),
     failedRequests: session.allFailedRequests.map(redact),

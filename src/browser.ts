@@ -3,6 +3,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fingerprintOf, sha256, type BuildInfo, type ScriptInfo } from "./provenance.js";
 import { loadSecrets, redactDeep } from "./secrets.js";
 
 /**
@@ -59,6 +60,11 @@ export class BrowserSession {
   private pendingRequests: string[] = [];
   private pendingDialogs: string[] = [];
   private tracing = false;
+  // Same-origin scripts the browser loaded, for the build fingerprint.
+  private origin = "";
+  private scripts = new Map<string, Promise<ScriptInfo | undefined>>();
+  private firstPageScripts = new Set<string>();
+  private firstPageLoaded = false;
 
   constructor(
     private readonly runDir: string,
@@ -100,10 +106,47 @@ export class BrowserSession {
     );
     this.page.on("response", (res) => {
       if (res.status() >= 400) this.recordRequest(`${res.request().method()} ${res.url()} -> ${res.status()}`);
+      else this.recordScript(res);
     });
 
+    this.origin = new URL(url).origin;
     await this.page.goto(url);
+    this.firstPageLoaded = true;
     return this.record("navigate", { url }, true, `Opened ${url}`);
+  }
+
+  private recordScript(res: import("playwright").Response) {
+    if (res.request().resourceType() !== "script") return;
+    const u = new URL(res.url());
+    if (u.origin !== this.origin || this.scripts.has(u.href)) return;
+    const path = u.pathname + u.search;
+    if (!this.firstPageLoaded) this.firstPageScripts.add(path);
+    this.scripts.set(
+      u.href,
+      res
+        .body()
+        .then((body) => ({
+          url: path,
+          sha256: sha256(body),
+          bytes: body.length,
+          lastModified: res.headers()["last-modified"],
+          fromServiceWorker: res.fromServiceWorker(),
+        }))
+        .catch(() => undefined),
+    );
+  }
+
+  /** Which build the browser actually ran: script hashes, Last-Modified, service worker. */
+  async build(): Promise<BuildInfo> {
+    const scripts = (await Promise.all(this.scripts.values())).filter((s): s is ScriptInfo => !!s);
+    const serviceWorker = await this.page
+      ?.evaluate(() => !!navigator.serviceWorker?.controller)
+      .catch(() => false);
+    return {
+      fingerprint: fingerprintOf(scripts.filter((s) => this.firstPageScripts.has(s.url))),
+      scripts,
+      serviceWorker: !!serviceWorker,
+    };
   }
 
   private recordConsole(line: string) {

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
 import type { Page } from "playwright";
 import { BrowserSession, type StepRecord, type Target } from "./browser.js";
+import { gitInfo, provenance, type Provenance } from "./provenance.js";
 import type { RunReport } from "./report.js";
 import { resolveSecrets } from "./secrets.js";
 
@@ -41,6 +42,8 @@ export interface Replay {
   volatile?: string[];
   /** Regexes for lines to ignore entirely when comparing. Edit by hand. */
   ignore?: string[];
+  /** The code and build the replay was recorded against. */
+  recordedWith?: { commit?: string; build: string };
 }
 
 export const REPLAY_DIR = ".witness/replays";
@@ -106,6 +109,9 @@ export function replayFromRun(report: RunReport): Replay | { error: string } {
     recordedAt: new Date().toISOString(),
     recordedUrl: report.url,
     fromRun: report.id,
+    ...(report.provenance
+      ? { recordedWith: { commit: report.provenance.git?.commit, build: report.provenance.build.fingerprint } }
+      : {}),
     steps,
   };
 }
@@ -165,6 +171,13 @@ export interface ReplayResult {
   durationMs: number;
   runDir: string;
   divergence?: Divergence;
+  /** Which code and build this replay ran against. */
+  provenance?: Provenance;
+  /**
+   * The browser loaded the same JavaScript as when the replay was recorded.
+   * A divergence then comes from data or the environment, not the frontend code.
+   */
+  sameBuild?: boolean;
 }
 
 export const maskDigits = (line: string) => line.replace(/\d+(?:[.,:]\d+)*/g, "#");
@@ -288,14 +301,20 @@ export async function runReplay(
 ): Promise<ReplayResult> {
   const started = Date.now();
   const session = new BrowserSession(opts.runDir, { headed: opts.headed, storageState: opts.storageState });
-  const result = (divergence?: Divergence): ReplayResult => ({
-    name: replay.name,
-    status: divergence ? "diverged" : "match",
-    steps: session.steps.length,
-    durationMs: Date.now() - started,
-    runDir: opts.runDir,
-    divergence,
-  });
+  const result = async (divergence?: Divergence): Promise<ReplayResult> => {
+    const tested = provenance(await session.build().catch(() => ({ fingerprint: "none", scripts: [], serviceWorker: false })), gitInfo(), opts.url);
+    const was = replay.recordedWith?.build;
+    return {
+      name: replay.name,
+      status: divergence ? "diverged" : "match",
+      steps: session.steps.length,
+      durationMs: Date.now() - started,
+      runDir: opts.runDir,
+      divergence,
+      provenance: tested,
+      ...(was && was !== "none" && tested.build.fingerprint !== "none" ? { sameBuild: was === tested.build.fingerprint } : {}),
+    };
+  };
 
   try {
     for (const [index, step] of replay.steps.entries()) {
@@ -324,11 +343,12 @@ export async function runReplay(
         }
       }
       if (divergence) {
-        await writeFile(join(opts.runDir, "replay.json"), JSON.stringify(result(divergence), null, 2));
-        return result(divergence);
+        const out = await result(divergence);
+        await writeFile(join(opts.runDir, "replay.json"), JSON.stringify(out, null, 2));
+        return out;
       }
     }
-    const ok = result();
+    const ok = await result();
     await writeFile(join(opts.runDir, "replay.json"), JSON.stringify(ok, null, 2));
     return ok;
   } finally {

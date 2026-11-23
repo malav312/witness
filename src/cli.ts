@@ -14,6 +14,7 @@ import {
   toPlaywrightSpec,
   type ReplayResult,
 } from "./replay.js";
+import { provenanceLine } from "./provenance.js";
 import { AUTH_FILE, defaultStorageState, newRunDir, runVerify, type VerifyOptions } from "./verify.js";
 import { SECRETS_FILE } from "./secrets.js";
 import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
@@ -82,6 +83,10 @@ function printVerdict(report: RunReport, runDir: string) {
     console.log(`  ${mark[c.status]} ${c.criterion}${c.evidence_steps.length ? `  [#${c.evidence_steps.join(", #")}]` : ""}`);
   }
   for (const p of v.problems) console.log(`  ! ${p}`);
+  if (report.provenance) {
+    console.log(`\ntested:   ${provenanceLine(report.provenance)}`);
+    for (const w of report.provenance.warnings) console.log(`  ⚠ ${w}`);
+  }
   console.log(`\nevidence: ${rel(join(runDir, "report.html"))}`);
 }
 
@@ -122,13 +127,19 @@ async function replay(names: string[], values: Values) {
     const entry: (typeof results)[number] = { ...res };
     results.push(entry);
 
+    const warn = () => res.provenance?.warnings.forEach((w) => opts.log!(`    ⚠ ${w}`));
     if (res.status === "match") {
       opts.log!(`✓ ${r.name}  ${res.steps} steps match  (${(res.durationMs / 1000).toFixed(1)}s, no LLM)`);
+      warn();
       continue;
     }
     const d = res.divergence!;
     opts.log!(`✗ ${r.name}  diverged at step ${d.step} (${d.action}): ${d.reason}`);
     if (d.diff) opts.log!(d.diff.replace(/^/gm, "    "));
+    if (res.provenance) opts.log!(`    tested: ${provenanceLine(res.provenance)}`);
+    if (res.sameBuild === true) opts.log!(`    Same JavaScript build as when recorded, so the difference comes from data, the backend or the environment, not the frontend code.`);
+    if (res.sameBuild === false) opts.log!(`    The JavaScript build differs from when the replay was recorded (${r.recordedWith?.build} → ${res.provenance?.build.fingerprint}).`);
+    warn();
     opts.log!(`    evidence: ${rel(runDir)}`);
     if (d.numbersOnly && !values.heal) {
       opts.log!(`    Only numbers changed, which looks like live data. --heal re-verifies the goal and, if it holds, learns these lines as volatile.`);

@@ -82,6 +82,7 @@ Those runs also exposed what breaks on real apps. All of these are fixed now, an
 | The agent couldn't pick from `<select>` dropdowns | **`select_option`** tool |
 | Goals with the same opening overwrote each other's replays, and heal left duplicates | Replay names get a short hash, and heal keeps the name |
 | A run that hit the usage limit died with no evidence | Aborted runs are **INCONCLUSIVE**, keep their evidence, and write `progress.log` as they go |
+| The branch said `master`, but the server still served the previous branch's build, so a manual test contradicted Witness | **What was tested**: every report records the commit and a fingerprint of the JavaScript the browser loaded, and warns when the served build is older than the code. See below. |
 
 ## Secrets and signing in
 
@@ -98,6 +99,23 @@ witness verify "Signed in, a user can create an MQTT monitor and it is still lis
 - **The Playwright trace is skipped** while secrets are configured, since it stores raw DOM values.
 - **Exported tests** read secrets from `WITNESS_SECRET_*` at run time.
 - **`witness auth`** keeps the login only if the Judge confirms you're signed in. The cookies go to `.witness/auth.json`, which is gitignored. Use `--no-auth` to ignore it.
+
+## What was tested
+
+A verdict is only as useful as knowing which code it was about. Every report has a **What was tested** section:
+
+```
+tested:   code 33cd7c7 (fix/mqtt-hostname) + 1 uncommitted · build 441701d9312e (1 script) · service worker active
+  ⚠ The app's JavaScript may be an old build: the newest script the server sent was last modified 12:40,
+    before the latest code change (HEAD moved to 33cd7c7, 12:52). Rebuild or restart the app, then run again.
+```
+
+- **code**: the commit, branch and uncommitted files in the repo Witness runs from.
+- **build**: a hash of the scripts the first page loaded. The same build gives the same fingerprint, so you can tell two runs tested identical JavaScript.
+- **Stale-build warning**: for an app on this machine, if the server's `Last-Modified` on its scripts is older than the latest code change (a checkout, a commit or an uncommitted frontend edit), the served build probably isn't the code you think you're testing.
+- **Replays** remember the build they were recorded on. When one diverges on the same build, the cause is data, the backend or the environment, not the frontend code.
+
+Witness starts every run in a fresh browser. A tab you already had open, or a service worker, can keep running an older build, so hard-reload before checking by hand.
 
 ## Replay: verify once with an agent, re-check for free
 
