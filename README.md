@@ -193,17 +193,19 @@ That is 14 cases. The eval reports:
 
 Results go to `.witness/evals/<id>/summary.md` and `results.json`, with a link to every run's evidence report.
 
-### Latest results ([3 trials](docs/eval/2026-11-22-trials3.md) · [first run](docs/eval/2026-11-22.md))
+### Latest results ([3 trials, 2026-11-23](docs/eval/2026-11-23-trials3.md) · [previous](docs/eval/2026-11-22-trials3.md))
 
 | Metric | Result |
 |---|---|
 | Bug catch rate | **24/24 (100%)** |
 | False alarm rate | **0/18 (0%)**, including a harmless UI change |
 | Same verdict on all 3 trials | **14/14 cases** |
-| No-LLM replay catch rate | **8/8 (100%)**, mean 1.3s per replay |
-| Agent run | mean 41s, 9.8 browser actions |
+| No-LLM replay catch rate | **8/8 (100%)**, mean 1.4s per replay |
+| Agent run | mean 38s, 15.4 browser actions |
 
-These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs in all. They were measured before the real-app fixes added the `select_option` and `click_at` tools and changed the Driver's instructions, so a re-run on the current Driver is due. Verdicts never varied between trials; only the path did (for example, `clear-all` took 15–18 actions).
+These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs, on the current Driver and Judge.
+
+**The eval caught a flaky rule in the Judge.** The first re-run after the real-app fixes scored 21/24. The Judge saw an uncaught error on every Add click and said it should be fixed, but judged the goal a pass anyway, 3 times out of 3. The previous eval had failed the same runs. The Judge's instructions never said whether errors fail a goal, so the verdict depended on interpretation. Now they do, and the full re-run is back to 24/24 (one goal was re-run separately after hitting the usage limit). [Details](docs/eval/2026-11-23-trials3.md#what-this-re-run-found).
 
 Every FAIL verdict named the actual bug, citing specific steps. Examples:
 - *"clicking Delete 'Bravo' removed Charlie and left Bravo"*
@@ -276,7 +278,7 @@ No-LLM tests, run with `npm test`:
 - [ ] Install from npm (`npx witness`)
 - [ ] A GitHub Action: free replays on every PR, the model only on divergence
 - [ ] A Copilot backend, so CI can run on Copilot with no extra keys
-- [ ] Re-run the eval on the current Driver
+- [x] Re-run the eval on the current Driver (caught and fixed an ambiguous Judge rule)
 
 Inspired by Lauren Tan's ([@poteto](https://github.com/poteto)) "verification is infrastructure" approach to agent harnesses.
 

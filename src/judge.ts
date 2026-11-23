@@ -33,7 +33,7 @@ Decide whether the evidence PROVES the goal is met.
 - A criterion is "met" only if a specific step shows it. Cite step numbers.
 - If the log never exercised a criterion, mark it "not_tested". Missing evidence is not a pass.
 - verdict: "pass" only if every criterion is met. "fail" if any criterion is contradicted by evidence. Otherwise "inconclusive".
-- Uncaught errors or failed requests during the flow are problems even if the UI looked fine.
+- Every goal implicitly includes "the flow runs without errors". An uncaught error or a failed request caused by the user's actions contradicts that criterion, so the verdict is "fail" even if the UI looked fine. Errors unrelated to the flow (e.g. a third-party script failing on page load before any action) are problems to report but don't fail the goal on their own.
 Be skeptical and precise.`;
 
 const MAX_IMAGES = 8;
