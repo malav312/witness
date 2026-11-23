@@ -2,6 +2,7 @@
   "name": "witness",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Agents don't get to say 'it works' without a witness.",
   "type": "module",
   "bin": {

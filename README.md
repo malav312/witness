@@ -65,8 +65,8 @@ It also raised something on its own: tasks users saved under the old key won't c
 ## Tested on real open-source apps
 
 Two agent sessions used Witness to fix four real open issues:
-- Actual Budget, which runs entirely in the browser: #3051 and #8972
-- Uptime Kuma, a full-stack app with Node, Socket.IO, SQLite and a login: #7805 and #7897
+- [Actual Budget](https://github.com/actualbudget/actual), which runs entirely in the browser: [#3051](https://github.com/actualbudget/actual/issues/3051) and [#8972](https://github.com/actualbudget/actual/issues/8972)
+- [Uptime Kuma](https://github.com/louislam/uptime-kuma), a full-stack app with Node, Socket.IO, SQLite and a login: [#7805](https://github.com/louislam/uptime-kuma/issues/7805) and [#7897](https://github.com/louislam/uptime-kuma/issues/7897)
 
 Witness reproduced each bug as a FAIL before the fix. After the fix it gave PASS on three of them. On the fourth, #3051, it gave a false FAIL, because the Driver had no way to click empty space.
 
@@ -253,4 +253,8 @@ No-LLM tests, run with `npm test`:
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [ ] `witness refresh` and a GitHub Action
 
-Inspired by Lauren Tan's ([@potetotes](https://x.com/potetotes)) "verification is infrastructure" approach to agent harnesses.
+Inspired by Lauren Tan's ([@poteto](https://github.com/poteto)) "verification is infrastructure" approach to agent harnesses.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
