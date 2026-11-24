@@ -132,7 +132,7 @@ export async function runTool(
         await session.goto(input.url);
         return `Navigated to ${input.url}`;
       case "reload":
-        await page.reload();
+        await session.reload();
         return "Reloaded";
     }
   }, target);

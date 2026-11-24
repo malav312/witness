@@ -99,7 +99,24 @@ witness verify "Signed in, a user can create an MQTT monitor and it is still lis
 - **The Playwright trace is skipped** while secrets are configured, since it stores raw DOM values.
 - **Exported tests** read secrets from `WITNESS_SECRET_*` at run time.
 - **`witness auth`** keeps the login only if the Judge confirms you're signed in. The cookies go to `.witness/auth.json`, which is gitignored. Use `--no-auth` to ignore it.
+- **`witness auth --manual`** is for single sign-on, MFA, or anything you wouldn't give an agent a password for. It opens a visible browser, and you sign in yourself; pop-ups and extra tabs are fine. Press Enter in the terminal when the app shows you signed in. Witness then:
+  - checks the saved session by opening the app in a fresh browser, and saves nothing if that lands back on a sign-in page;
+  - saves sessionStorage too, which Playwright's storage state leaves out, though some sign-in libraries keep their tokens there;
+  - lets later runs load pages from the sign-in sites you went through, for silent token refresh. Secrets are still typed only on the app's own origin.
+- **Expired logins are flagged.** If the saved cookies have expired, the run warns you to sign in again.
 - **The browser stays on the app.** Pages load only from the app's origin. Navigating elsewhere, following an off-site link or opening a local `file://` path is blocked and recorded as a failed step, so text in the app under test can't steer the Driver somewhere else. Secrets are typed only into fields on allowed origins. If login goes through another site, such as an identity provider, list it: `WITNESS_ALLOWED_ORIGINS=https://login.example.com`.
+
+## Running on a company app
+
+These options came from a first run on an internal app on a locked-down Windows laptop, behind single sign-on:
+
+| Option | What it does |
+|---|---|
+| `witness auth --manual` | You sign in yourself in a visible browser (see above). |
+| `--channel msedge` / `chrome` / `brave` (or `WITNESS_BROWSER_CHANNEL`) | Uses an installed browser instead of Playwright's Chromium, which policy may block. Brave is looked up in its usual install location. For any other Chromium-based browser, pass the path to its executable. Applies to verify, replay, map and auth. |
+| `WITNESS_READY_SELECTOR="nav .menu"` | After each page load, waits for this element before taking evidence. For app shells that show a spinner or skeleton first. Witness always waits for the network to go quiet first, for up to 5 seconds. `WITNESS_READY_TIMEOUT_MS` sets the wait (default 15000). If the element never appears, the step notes it and the run continues. |
+| `witness.ignore-errors.txt` (or `WITNESS_IGNORE_ERRORS=<regex>`) | Lists known-noise errors, one per line, as a substring or `/regex/flags`: a telemetry script the proxy blocks, or a missing favicon. Matching errors are left out of the evidence, so they don't fail goals or break replays. They're still counted in the report, under "Ignored as known noise". |
+| Backend check | Before opening a browser, Witness checks that the backend can run: Claude Code is installed and signed in, or the API key works. If not, it fails in about a second and tells you what to do. |
 
 ## What was tested
 
@@ -220,6 +237,8 @@ Every FAIL verdict named the actual bug, citing specific steps. Examples:
 
 Coding agents report success when the code compiles or the tests they wrote pass. Witness makes "done" mean *evidence*: screenshots, console errors, failed requests and a replayable trace, judged by a model that never saw the agent's reasoning.
 
+**The codebase is the hypothesis. Observed behavior is the evidence.** Code, and the agent's account of it, say what *should* happen. Only what the running app does can pass a goal. The Feature Map can guide the agent, but it is never evidence.
+
 ## How it works
 
 | Piece | What it does |
@@ -265,6 +284,7 @@ No-LLM tests, run with `npm test`:
 - `test/gaps-smoke.ts`: secrets, select_option, click_at, saved logins, live-data masking, unique replay names, and aborted runs
 - `test/provenance-smoke.ts`: what was tested, including the stale-build warning after a checkout without a rebuild
 - `test/guard-smoke.ts`: the browser can't leave the app's origin, and secrets aren't typed into other origins
+- `test/realapp-smoke.ts`: backend check, `--channel`, the readiness wait, the ignore list, expired logins, and a manual sign-in's sessionStorage and sign-in site
 
 ## Roadmap
 
@@ -275,7 +295,9 @@ No-LLM tests, run with `npm test`:
 - [x] Standalone MCP server (`witness mcp`) and a Claude Code skill, so agents can verify their own work
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [x] What was tested: commit, build fingerprint and stale-build warnings
+- [x] Company apps: manual sign-in, installed browsers, readiness wait, known-noise errors, backend check
 - [ ] Install from npm (`npx witness`)
+- [ ] Windows: docs, and CI on Linux and Windows
 - [ ] A GitHub Action: free replays on every PR, the model only on divergence
 - [ ] A Copilot backend, so CI can run on Copilot with no extra keys
 - [x] Re-run the eval on the current Driver (caught and fixed an ambiguous Judge rule)

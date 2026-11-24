@@ -24,6 +24,17 @@ export interface ClaudeCodeResult {
   hitTurnLimit: boolean;
 }
 
+/** A next step for common Claude Code failures. */
+export function claudeCodeHint(message: string): string {
+  if (/not (logged|signed) in|\/login|authenticat|oauth|credential/i.test(message)) {
+    return " Sign Claude Code in (run `claude`, then /login), or use --backend api with ANTHROPIC_API_KEY.";
+  }
+  if (/usage limit|rate limit|limit reached|quota|usage credits|out of credits|credit balance/i.test(message)) {
+    return " Wait for the limit to reset or add usage credits, or use --backend api with ANTHROPIC_API_KEY.";
+  }
+  return "";
+}
+
 export async function runClaudeCode(run: ClaudeCodeRun): Promise<ClaudeCodeResult> {
   const args = [
     "-p",
@@ -71,7 +82,11 @@ export async function runClaudeCode(run: ClaudeCodeRun): Promise<ClaudeCodeResul
     throw new Error(`Claude Code exited ${code} without a JSON result. ${stderr.trim().slice(0, 500)}`);
   }
   if (out.is_error && !out.structured_output) {
-    throw new Error(`Claude Code error (${out.subtype}): ${String(out.result ?? stderr).slice(0, 500)}`);
+    // subtype is "success" when the CLI itself ran fine but the request failed
+    // (signed out, usage limit), so only show it when it says something.
+    const why = String(out.result || stderr).trim().slice(0, 500);
+    const kind = out.subtype && out.subtype !== "success" ? ` (${out.subtype})` : "";
+    throw new Error(`Claude Code returned an error${kind}: ${why}${claudeCodeHint(why)}`);
   }
   const usage = out.usage ?? {};
   return {

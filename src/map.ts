@@ -9,13 +9,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "playwright";
 import YAML from "yaml";
 import { z } from "zod";
 import type { Backend } from "./driver.js";
 import { MODEL, client, requestDefaults } from "./claude.js";
 import { runClaudeCode } from "./claude-code.js";
-import { parseAriaNode } from "./browser.js";
+import { launchBrowser, parseAriaNode, waitReady } from "./browser.js";
+import { readAuthExtra, restoreSessionStorage } from "./auth.js";
+import { checkBackend } from "./preflight.js";
 import { maskDigits } from "./replay.js";
 
 export const MAP_FILE = "witness.map.yaml";
@@ -47,13 +48,14 @@ export function controlsOf(aria: string): string[] {
 export async function crawl(startUrl: string, outDir: string, maxPages = 20, storageState?: string): Promise<CrawlPage[]> {
   await mkdir(outDir, { recursive: true });
   const origin = new URL(startUrl).origin;
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   // A fresh context, as a new user first sees the app, or signed in with a
   // saved login (`witness auth`) so the crawl gets past the login page.
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     ...(storageState ? { storageState } : {}),
   });
+  await restoreSessionStorage(context, readAuthExtra(storageState));
   const page = await context.newPage();
   const queue = [new URL(startUrl).pathname + new URL(startUrl).search];
   const seen = new Set(queue);
@@ -62,7 +64,7 @@ export async function crawl(startUrl: string, outDir: string, maxPages = 20, sto
     while (queue.length && pages.length < maxPages) {
       const path = queue.shift()!;
       await page.goto(origin + path);
-      await page.waitForLoadState("domcontentloaded");
+      await waitReady(page);
       const aria = await page.ariaSnapshot();
       const screenshot = join(outDir, `page-${pages.length}.png`);
       await page.screenshot({ path: screenshot });
@@ -210,6 +212,7 @@ export async function buildMap(opts: {
   log?: (l: string) => void;
 }): Promise<FeatureMap> {
   const log = opts.log ?? (() => {});
+  await checkBackend(opts.backend);
   log(`  crawling ${opts.url}…`);
   const pages = await crawl(opts.url, opts.workDir, 20, opts.storageState);
   log(`  found ${pages.length} page(s): ${pages.map((p) => p.path).join(", ")}`);

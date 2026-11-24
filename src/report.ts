@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { StepRecord } from "./browser.js";
 import type { DriverResult } from "./driver.js";
 import type { Verdict } from "./judge.js";
+import type { IgnoredError } from "./noise.js";
 import { provenanceLine, type Provenance } from "./provenance.js";
 
 export interface RunReport {
@@ -21,6 +22,8 @@ export interface RunReport {
   steps: StepRecord[];
   consoleErrors: string[];
   failedRequests: string[];
+  /** Errors matching the ignore list (witness.ignore-errors.txt), left out of the evidence. */
+  ignoredErrors?: IgnoredError[];
   usage: { input: number; output: number };
 }
 
@@ -49,6 +52,12 @@ function tested(p?: Provenance): string {
 <p>${esc(provenanceLine(p))}</p>${dirty}
 <details><summary>Scripts the browser loaded</summary><ul class="note">${scripts || "<li>none</li>"}</ul></details>
 <p class="note">Witness starts every run in a fresh browser. A browser you already had open may still run an older build: hard-reload it (Cmd/Ctrl+Shift+R).</p>`;
+}
+
+function ignoredSection(ignored?: RunReport["ignoredErrors"]): string {
+  if (!ignored?.length) return "";
+  const rows = ignored.map((e) => `<li><code>${esc(e.pattern)}</code> × ${e.count}<div class="note">e.g. ${esc(e.example)}</div></li>`).join("");
+  return `<h2>Ignored as known noise</h2><p class="note">These errors matched the ignore list, so they were left out of the evidence the Judge saw.</p><ul>${rows}</ul>`;
 }
 
 function html(r: RunReport): string {
@@ -94,6 +103,7 @@ figure img{width:100%;display:block;border-bottom:1px solid #d0d7de} figcaption{
 <table>${criteria}</table>
 ${v.problems.length ? `<h2>Problems observed</h2><ul>${v.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
 ${tested(r.provenance)}
+${ignoredSection(r.ignoredErrors)}
 <h2>What the agent said</h2>
 <div class="claim">${esc(r.driver.summary)}<br><small>Driver status: ${esc(r.driver.status)}. Not used by the judge.</small></div>
 <h2>Evidence</h2>

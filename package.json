@@ -13,7 +13,7 @@
     "witness": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "eval": "tsx eval/run.ts",
-    "test": "tsx test/browser-smoke.ts && tsx test/replay-smoke.ts && tsx test/map-smoke.ts && tsx test/mcp-smoke.ts && tsx test/gaps-smoke.ts && tsx test/provenance-smoke.ts && tsx test/guard-smoke.ts"
+    "test": "tsx test/browser-smoke.ts && tsx test/replay-smoke.ts && tsx test/map-smoke.ts && tsx test/mcp-smoke.ts && tsx test/gaps-smoke.ts && tsx test/provenance-smoke.ts && tsx test/guard-smoke.ts && tsx test/realapp-smoke.ts"
   },
   "engines": {
     "node": ">=22"

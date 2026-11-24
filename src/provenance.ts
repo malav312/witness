@@ -51,7 +51,7 @@ export const fingerprintOf = (scripts: ScriptInfo[]) =>
 const git = (dir: string, ...args: string[]) =>
   execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 
-const OWN_FILES = /^(\.witness\/|witness\.map\.yaml$)/;
+const OWN_FILES = /^(\.witness\/|witness\.map\.yaml$|witness\.ignore-errors\.txt$)/;
 // Uncommitted edits to these can change what the browser runs. Backend-only
 // edits don't make a frontend build stale, so they don't count.
 const FRONTEND = /\.(m?[jt]sx?|cjs|vue|svelte|astro|css|scss|sass|less|html?)$/i;

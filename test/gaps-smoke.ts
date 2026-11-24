@@ -116,12 +116,21 @@ try {
   expect(changed.some((l) => l.includes("left")) && !changed.some((l) => l.includes("Heartbeats")), `masking is per line: a changed count elsewhere is still caught (${changed.join(" | ")})`);
   expect(numericChanges("- a 1\n+ a 2\n- b\n+ c").numbersOnly === false, "a divergence with a text change is not numbers-only");
 
-  // --- an aborted run keeps its evidence ---
+  // --- a missing backend fails fast, before a browser opens ---
   const path = process.env.PATH;
-  process.env.PATH = "/nonexistent"; // the claude CLI can't be found, as if the backend died
+  process.env.PATH = "/nonexistent"; // the claude CLI can't be found
+  const pre = await tmp();
+  const t0 = Date.now();
+  const preErr = await runVerify("Open the page", { url, backend: "claude-code", maxSteps: 3, outDir: pre }).then(() => "", (e) => String(e?.message ?? e));
+  expect(preErr.includes("isn't installed") && Date.now() - t0 < 3000, `preflight stops the run in ${Date.now() - t0}ms: ${preErr.slice(0, 70)}`);
+  expect((await readdir(pre)).length === 0, "no run folder or browser for a run that can't start");
+
+  // --- an aborted run keeps its evidence (backend dies after the check) ---
+  process.env.WITNESS_SKIP_PREFLIGHT = "1";
   const out = await tmp();
   const { report: ab, runDir } = await runVerify("Open the page", { url, backend: "claude-code", maxSteps: 3, outDir: out });
   process.env.PATH = path;
+  delete process.env.WITNESS_SKIP_PREFLIGHT;
   const files = await readdir(runDir);
   expect(ab.verdict.verdict === "inconclusive" && ab.verdict.summary.includes("aborted"), `aborted run is inconclusive: ${ab.verdict.summary.slice(0, 90)}`);
   expect(files.includes("report.html") && files.includes("progress.log") && (await readdir(join(runDir, "screens"))).length > 0, "aborted run still has a report, progress log and screenshots");

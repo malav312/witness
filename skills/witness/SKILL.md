@@ -27,7 +27,7 @@ Don't use it for pure refactors with no behavior change (use `witness_replay` fo
 
    For a bug fix, the goal is the behavior that was broken.
 
-3. **Credentials and login.** Never write a real password, token or key in a goal. Write `{{secret:NAME}}` and ask the user to set `WITNESS_SECRET_NAME` or add `NAME=value` to `.witness/secrets.env`. Witness types the value and redacts it from everything it records. If the app needs a login, call `witness_auth` once ("Log in as {{secret:USER}} with password {{secret:PASSWORD}}"). After that, verify, replay and map all start signed in.
+3. **Credentials and login.** Never write a real password, token or key in a goal. Write `{{secret:NAME}}` and ask the user to set `WITNESS_SECRET_NAME` or add `NAME=value` to `.witness/secrets.env`. Witness types the value and redacts it from everything it records. If the app needs a login, call `witness_auth` once ("Log in as {{secret:USER}} with password {{secret:PASSWORD}}"). After that, verify, replay and map all start signed in. If the app uses single sign-on or MFA, don't try to log in: ask the user to run `witness auth --manual` and sign in themselves.
 
 4. **Call `witness_verify`.** It takes about a minute.
 

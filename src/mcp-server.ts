@@ -15,6 +15,7 @@ import type { Backend } from "./driver.js";
 import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
 import type { RunReport } from "./report.js";
 import { loadReplays, replayFromRun, rerecord, runReplay, saveReplay } from "./replay.js";
+import { ignoredLine } from "./noise.js";
 import { provenanceLine } from "./provenance.js";
 import { SECRETS_FILE } from "./secrets.js";
 import { AUTH_FILE, defaultStorageState, newRunDir, runVerify } from "./verify.js";
@@ -31,6 +32,12 @@ const text = (t: string, structured?: Record<string, unknown>, isError = false) 
   isError,
 });
 
+function couldNotRun(err: unknown, url: string): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const unreachable = /ERR_CONNECTION|ECONNREFUSED|net::|ENOTFOUND/i.test(msg);
+  return `Witness could not run: ${msg}${unreachable ? ` Is the app running at ${url}?` : ""}`;
+}
+
 function formatVerdict(report: RunReport, runDir: string, replayFile?: string): string {
   const v = report.verdict;
   const mark = { met: "✓", not_met: "✗", not_tested: "–" };
@@ -44,6 +51,7 @@ function formatVerdict(report: RunReport, runDir: string, replayFile?: string): 
     ...(report.provenance
       ? ["", `Tested: ${provenanceLine(report.provenance)}`, ...report.provenance.warnings.map((w) => `WARNING: ${w}`)]
       : []),
+    ...(ignoredLine(report.ignoredErrors) ? [`Note: ${ignoredLine(report.ignoredErrors)} (left out of the evidence by the ignore list)`] : []),
     "",
     `Evidence report: ${rel(join(runDir, "report.html"))} (screenshots in ${rel(join(runDir, "screens"))}/)`,
     ...(replayFile ? [`Saved as replay: ${rel(replayFile)}. Re-check later with witness_replay, no LLM needed.`] : []),
@@ -109,7 +117,7 @@ export async function serveMcp() {
           replay: replayFile ? rel(replayFile) : null,
         });
       } catch (err) {
-        return text(`Witness could not run: ${err instanceof Error ? err.message : err}. Is the app running at ${urlOr(url)}?`, undefined, true);
+        return text(couldNotRun(err, urlOr(url)), undefined, true);
       }
     },
   );

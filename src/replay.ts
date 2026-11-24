@@ -6,6 +6,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
 import type { Page } from "playwright";
+import { authWarnings } from "./auth.js";
 import { BrowserSession, type StepRecord, type Target } from "./browser.js";
 import { gitInfo, provenance, type Provenance } from "./provenance.js";
 import type { RunReport } from "./report.js";
@@ -287,7 +288,7 @@ async function perform(session: BrowserSession, page: Page, step: ReplayStep, ba
       await session.goto(new URL(step.path!, baseUrl).href);
       return `Navigated to ${step.path}`;
     case "reload":
-      await page.reload();
+      await session.reload();
       return "Reloaded";
     default:
       throw new Error(`Unexpected step ${step.action}`);
@@ -302,6 +303,7 @@ export async function runReplay(
   const session = new BrowserSession(opts.runDir, { headed: opts.headed, storageState: opts.storageState });
   const result = async (divergence?: Divergence): Promise<ReplayResult> => {
     const tested = provenance(await session.build().catch(() => ({ fingerprint: "none", scripts: [], serviceWorker: false })), gitInfo(), opts.url);
+    tested.warnings.push(...authWarnings(opts.storageState));
     const was = replay.recordedWith?.build;
     return {
       name: replay.name,
