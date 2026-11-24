@@ -7,11 +7,12 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { AUTH_EXTRA_FILE, AUTH_FILE, authWarnings } from "../src/auth.ts";
+import { AUTH_EXTRA_FILE, AUTH_FILE, authWarnings, checkSignedIn } from "../src/auth.ts";
 import { BrowserSession, browserLaunchOptions, launchBrowser } from "../src/browser.ts";
 import { runClaudeCode } from "../src/claude-code.ts";
 import { loadIgnoreRules } from "../src/noise.ts";
 import { checkBackend } from "../src/preflight.ts";
+import { runReplay } from "../src/replay.ts";
 import { resetSecrets } from "../src/secrets.ts";
 
 let failed = 0;
@@ -151,6 +152,39 @@ try {
   expect(idpErr.includes("Refused to type a secret"), "but secrets are never typed on it");
   await signed.stop();
   delete process.env.WITNESS_SECRET_PW;
+
+  // --- does a saved session really sign in? (sign-in page on the app's own site) ---
+  const gate = http.createServer((req, res) => {
+    const ok = (req.headers.cookie ?? "").includes("sid=x");
+    res.writeHead(200, { "content-type": "text/html" });
+    if (req.url === "/public") return res.end("<h1>Welcome</h1>");
+    if (req.url === "/email") return res.end(ok ? "<h1>Inbox</h1>" : "<h1>Sign in</h1><input aria-label=Email>");
+    res.end(ok ? "<h1>Inbox</h1>" : "<h1>Sign in</h1><input type=password>");
+  });
+  await new Promise<void>((r) => gate.listen(0, "127.0.0.1", r));
+  const g = `http://127.0.0.1:${(gate.address() as AddressInfo).port}`;
+  const b = await launchBrowser();
+  const extra = { savedAt: "", appOrigin: g, signInOrigins: [] };
+  const good = state(now + 3600) as Parameters<typeof checkSignedIn>[2];
+  const none = { cookies: [], origins: [] };
+  expect((await checkSignedIn(b, `${g}/`, good, extra)) === undefined, "a real sign-in passes the check");
+  expect((await checkSignedIn(b, `${g}/`, none, extra))?.why.includes("password field") === true, "an unfinished sign-in on the app's own site is caught (password field)");
+  expect((await checkSignedIn(b, `${g}/email`, none, extra))?.why.includes("exactly the same") === true, "and on an email-first page (same as signed out)");
+  expect((await checkSignedIn(b, `${g}/public`, good, extra))?.problem === "doubtful", "a public page is doubtful, not refused: the user decides");
+  await b.close();
+  gate.close();
+
+  // --- replays count ignored errors too ---
+  process.env.WITNESS_IGNORE_ERRORS = "appinsights";
+  const rs = new BrowserSession(dir());
+  const step0 = await rs.start(url);
+  await rs.stop();
+  const rep = await runReplay(
+    { version: 1, name: "r", goal: "g", recordedAt: "", recordedUrl: url, fromRun: "", steps: [{ action: "open", path: "/", expect: { aria: step0.aria, consoleErrors: 0 } }] },
+    { url, runDir: dir() },
+  );
+  expect(rep.status === "match" && rep.ignoredErrors?.[0]?.count === 1, `replay results list ignored errors: ${JSON.stringify(rep.ignoredErrors?.map((e) => [e.pattern, e.count]))}`);
+  delete process.env.WITNESS_IGNORE_ERRORS;
 } finally {
   process.chdir(cwd);
   process.env.PATH = path;

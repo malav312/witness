@@ -34,7 +34,8 @@ const goalPrompt = (goal: string, url: string, map?: string) =>
   `Goal to exercise:\n${goal}\n\nThe app is open at ${url}.` +
   (map
     ? `\n\nFeature Map of this app, written earlier. Use it to find your way and to know the traps, ` +
-      `but trust what the app shows you now if they disagree:\n<feature_map>\n${map}\n</feature_map>`
+      `but trust what the app shows you now if they disagree. ` +
+      `Scenarios marked "from code" are unconfirmed guesses: never report one as working unless you saw it work:\n<feature_map>\n${map}\n</feature_map>`
     : "");
 
 export function drive(session: BrowserSession, runDir: string, goal: string, opts: DriveOptions) {

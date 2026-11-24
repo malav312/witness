@@ -9,7 +9,9 @@ import type { Page } from "playwright";
 import { authWarnings } from "./auth.js";
 import { BrowserSession, type StepRecord, type Target } from "./browser.js";
 import { gitInfo, provenance, type Provenance } from "./provenance.js";
+import type { IgnoredError } from "./noise.js";
 import type { RunReport } from "./report.js";
+import { redact } from "./secrets.js";
 
 export interface ReplayStep {
   action: "open" | "click" | "type" | "select_option" | "click_at" | "press" | "navigate" | "reload";
@@ -173,6 +175,8 @@ export interface ReplayResult {
   divergence?: Divergence;
   /** Which code and build this replay ran against. */
   provenance?: Provenance;
+  /** Errors matching the ignore list, left out of the comparison. */
+  ignoredErrors?: IgnoredError[];
   /**
    * The browser loaded the same JavaScript as when the replay was recorded.
    * A divergence then comes from data or the environment, not the frontend code.
@@ -313,6 +317,7 @@ export async function runReplay(
       runDir: opts.runDir,
       divergence,
       provenance: tested,
+      ignoredErrors: session.ignoredErrors().map((e) => ({ ...e, example: redact(e.example) })),
       ...(was && was !== "none" && tested.build.fingerprint !== "none" ? { sameBuild: was === tested.build.fingerprint } : {}),
     };
   };

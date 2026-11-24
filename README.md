@@ -100,9 +100,9 @@ witness verify "Signed in, a user can create an MQTT monitor and it is still lis
 - **Exported tests** read secrets from `WITNESS_SECRET_*` at run time.
 - **`witness auth`** keeps the login only if the Judge confirms you're signed in. The cookies go to `.witness/auth.json`, which is gitignored. Use `--no-auth` to ignore it.
 - **`witness auth --manual`** is for single sign-on, MFA, or anything you wouldn't give an agent a password for. It opens a visible browser, and you sign in yourself; pop-ups and extra tabs are fine. Press Enter in the terminal when the app shows you signed in. Witness then:
-  - checks the saved session by opening the app in a fresh browser, and saves nothing if that lands back on a sign-in page;
+  - checks the saved session by opening the app in a fresh browser. If that lands on another site, it saves nothing. If it shows a password field, or looks exactly as it does signed out, it asks you before saving;
   - saves sessionStorage too, which Playwright's storage state leaves out, though some sign-in libraries keep their tokens there;
-  - lets later runs load pages from the sign-in sites you went through, for silent token refresh. Secrets are still typed only on the app's own origin.
+  - lets later runs load pages from the sign-in sites you went through, for silent token refresh. Secrets are never typed on them, only on the app's own origin and any you list in `WITNESS_ALLOWED_ORIGINS`.
 - **Expired logins are flagged.** If the saved cookies have expired, the run warns you to sign in again.
 - **The browser stays on the app.** Pages load only from the app's origin. Navigating elsewhere, following an off-site link or opening a local `file://` path is blocked and recorded as a failed step, so text in the app under test can't steer the Driver somewhere else. Secrets are typed only into fields on allowed origins. If login goes through another site, such as an identity provider, list it: `WITNESS_ALLOWED_ORIGINS=https://login.example.com`.
 
@@ -114,8 +114,8 @@ These options came from a first run on an internal app on a locked-down Windows 
 |---|---|
 | `witness auth --manual` | You sign in yourself in a visible browser (see above). |
 | `--channel msedge` / `chrome` / `brave` (or `WITNESS_BROWSER_CHANNEL`) | Uses an installed browser instead of Playwright's Chromium, which policy may block. Brave is looked up in its usual install location. For any other Chromium-based browser, pass the path to its executable. Applies to verify, replay, map and auth. |
-| `WITNESS_READY_SELECTOR="nav .menu"` | After each page load, waits for this element before taking evidence. For app shells that show a spinner or skeleton first. Witness always waits for the network to go quiet first, for up to 5 seconds. `WITNESS_READY_TIMEOUT_MS` sets the wait (default 15000). If the element never appears, the step notes it and the run continues. |
-| `witness.ignore-errors.txt` (or `WITNESS_IGNORE_ERRORS=<regex>`) | Lists known-noise errors, one per line, as a substring or `/regex/flags`: a telemetry script the proxy blocks, or a missing favicon. Matching errors are left out of the evidence, so they don't fail goals or break replays. They're still counted in the report, under "Ignored as known noise". |
+| `WITNESS_READY_SELECTOR="nav .menu"` | After each page load, waits for this element, then for the network to go quiet (always done, for up to 5 seconds), before taking evidence. For app shells that show a spinner or skeleton first. `WITNESS_READY_TIMEOUT_MS` sets how long to wait for the element (default 15000). If it never appears, the run continues; the first step notes it. |
+| `witness.ignore-errors.txt` (or `WITNESS_IGNORE_ERRORS=<regex>`) | Lists known-noise errors, one per line, as a substring or `/regex/flags`: a telemetry script the proxy blocks, or a missing favicon. Matching errors are left out of the evidence, so they don't fail goals or break replays. They're still counted, in the report under "Ignored as known noise" and in replay results. |
 | Backend check | Before opening a browser, Witness checks that the backend can run: Claude Code is installed and signed in, or the API key works. If not, it fails in about a second and tells you what to do. |
 
 ## What was tested
@@ -188,6 +188,28 @@ Pages and controls in the map come from the crawl, not the model, so `--check` c
 `verify` gives the map to the Driver automatically when `witness.map.yaml` exists (`--no-map` to skip). The Judge never sees the map, so the verdict still rests on evidence only. The map is plain YAML, meant to be edited and committed. See [witness.map.yaml](witness.map.yaml) for the demo app's map.
 
 Lessons from runs are written as things to check, with a date ("reload to confirm tasks persist; a run on 2026-11-22 found they did not"), never as facts. A bug that has since been fixed shouldn't become permanent lore.
+
+### Scenarios: the code as a hypothesis
+
+A crawl only follows links, so it misses routes nothing links to, forms behind buttons, and flows that take several steps. Run from the app's repo, `witness map` also reads the source:
+
+```bash
+witness scan                  # what the code says the app has: local, instant, no LLM
+witness map                   # crawl + code, when the code's routes match the app
+witness map --code ../my-app  # the source is somewhere else
+witness map --no-code         # crawl only
+```
+
+- **The scan** finds React Router and Vue Router routes, form controls with their validation rules, Express endpoints, socket.io events, status and role values, and end-to-end test titles.
+- **The crawl then opens routes nothing links to.** A route counts as seen only if it opens as its own page, not as an error, a redirect or a copy of another page. Routes whose names suggest they sign out or change data (`/logout`, `/delete-account`) are never opened.
+- **The model writes scenarios** from both: what each flow needs first, its steps, and what the code suggests should happen.
+- **Labels come from matching, not from the model.** `from code` means only the source suggests it. `seen in app` means the crawl saw the scenario's pages and controls, *not* that the flow works. Citations that don't exist in the scan are removed, and a scenario with nothing behind it is dropped.
+- **The Judge never uses the map.** On Uptime Kuma, the code says an API key's Name is required. A run that opened the form but never tried to submit it empty came back *inconclusive*, because nothing on screen showed it.
+- **`--check`** also reports routes added to or removed from the code.
+
+The scan runs locally, but `witness map` sends the model names from it: route paths, control labels, endpoints, status values and test titles, not the source itself. They're also saved in `witness.map.yaml`.
+
+What it doesn't do yet: Next.js and other file-based routes, Angular, GraphQL, server-rendered templates, forms more than one import away from a route, or status *transitions* (it lists the values, not which can follow which). It doesn't yet mark scenarios as proven by a run.
 
 ## Eval: does it actually catch bugs?
 
@@ -284,7 +306,8 @@ No-LLM tests, run with `npm test`:
 - `test/gaps-smoke.ts`: secrets, select_option, click_at, saved logins, live-data masking, unique replay names, and aborted runs
 - `test/provenance-smoke.ts`: what was tested, including the stale-build warning after a checkout without a rebuild
 - `test/guard-smoke.ts`: the browser can't leave the app's origin, and secrets aren't typed into other origins
-- `test/realapp-smoke.ts`: backend check, `--channel`, the readiness wait, the ignore list, expired logins, and a manual sign-in's sessionStorage and sign-in site
+- `test/realapp-smoke.ts`: backend check, `--channel`, the readiness wait, the ignore list, expired logins, the signed-in check, and a manual sign-in's sessionStorage and sign-in site
+- `test/code-smoke.ts`: the code scan (React, Vue, Express, socket.io), and that labels and citations are checked against the crawl and the scan
 
 ## Roadmap
 
@@ -296,6 +319,8 @@ No-LLM tests, run with `npm test`:
 - [x] Eval: catch rate, false-alarm rate and no-LLM replay catch rate across every demo bug
 - [x] What was tested: commit, build fingerprint and stale-build warnings
 - [x] Company apps: manual sign-in, installed browsers, readiness wait, known-noise errors, backend check
+- [x] Scenario map: read the code into the Feature Map as hypotheses, labeled by what the crawl saw
+- [ ] Scenarios proven by runs, and which scenarios a diff affects
 - [ ] Install from npm (`npx witness`)
 - [ ] Windows: docs, and CI on Linux and Windows
 - [ ] A GitHub Action: free replays on every PR, the model only on divergence

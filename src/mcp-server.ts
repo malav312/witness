@@ -12,7 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import type { Backend } from "./driver.js";
-import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
+import { MAP_FILE, buildMap, checkMap, defaultCodeDir, hasDrift, readMap, writeMap } from "./map.js";
 import type { RunReport } from "./report.js";
 import { loadReplays, replayFromRun, rerecord, runReplay, saveReplay } from "./replay.js";
 import { ignoredLine } from "./noise.js";
@@ -145,7 +145,7 @@ export async function serveMcp() {
         for (const { replay: r } of replays) {
           const { runDir } = await newRunDir(OUT, `-replay-${r.name}`);
           const res = await runReplay(r, { url: urlOr(url), runDir, storageState: defaultStorageState() });
-          const warnings = res.provenance?.warnings ?? [];
+          const warnings = [...(res.provenance?.warnings ?? []), ...[ignoredLine(res.ignoredErrors)].filter((l) => l !== undefined)];
           if (res.status === "match") {
             lines.push(`✓ ${r.name}: ${res.steps} steps match (${(res.durationMs / 1000).toFixed(1)}s)`, ...warnings.map((w) => `    WARNING: ${w}`));
             results.push({ name: r.name, status: "match", warnings });
@@ -207,15 +207,20 @@ export async function serveMcp() {
             ...d.addedPages.map((p) => `+ new page ${p}`),
             ...d.removedPages.map((p) => `- page gone: ${p}`),
             ...d.changedPages.flatMap((c) => [...c.added.map((a) => `+ ${c.path}: ${a}`), ...c.removed.map((r) => `- ${c.path}: ${r}`)]),
+            ...d.addedRoutes.map((r) => `+ new route in the code: ${r}`),
+            ...d.removedRoutes.map((r) => `- route gone from the code: ${r}`),
             ...d.staleFeatures.map((f) => `! "${f.name}" relies on missing ${f.missing.join(", ")}`),
           ];
           return text(lines.join("\n"), { drift: true, ...d });
         }
-        const m = await buildMap({ url: urlOr(url), backend: backend(), workDir: runDir, runsDir: OUT, storageState: defaultStorageState(), log });
+        const m = await buildMap({ url: urlOr(url), backend: backend(), workDir: runDir, runsDir: OUT, storageState: defaultStorageState(), codeDir: defaultCodeDir(), log });
         await writeMap(m);
         return text(
           `Wrote ${MAP_FILE}: ${m.pages.length} page(s), ${m.features.length} feature(s).\n` +
-            m.features.map((f) => `- ${f.name} (${f.page})${f.traps.length ? `: ${f.traps.join(" / ")}` : ""}`).join("\n"),
+            m.features.map((f) => `- ${f.name} (${f.page})${f.traps.length ? `: ${f.traps.join(" / ")}` : ""}`).join("\n") +
+            (m.scenarios?.length
+              ? `\n\nScenarios to try. None is proven until witness_verify passes it:\n${m.scenarios.map((s) => `- [${s.trust}] ${s.name}`).join("\n")}`
+              : ""),
         );
       } catch (err) {
         return text(`Mapping failed: ${err instanceof Error ? err.message : err}`, undefined, true);

@@ -47,7 +47,7 @@ Don't use it for pure refactors with no behavior change (use `witness_replay` fo
 
 ## Feature Map
 
-`witness_verify` reads `witness.map.yaml` automatically if it exists. If the app has several pages and no map yet, run `witness_map` once. After large UI changes, `witness_map` with `check: true` shows drift without using the model.
+`witness_verify` reads `witness.map.yaml` automatically if it exists. If the app has several pages and no map yet, run `witness_map` once. After large UI changes, `witness_map` with `check: true` shows drift without using the model. Its scenarios are flows worth verifying: pick the ones your change touches. `from code` means only the source suggests it, and `seen in app` means the crawl saw its pages and controls. Neither means it works: only a pass from `witness_verify` does.
 
 ## Reporting to the user
 

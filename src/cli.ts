@@ -15,12 +15,13 @@ import {
   type ReplayResult,
 } from "./replay.js";
 import { provenanceLine } from "./provenance.js";
-import { AUTH_EXTRA_FILE, authWarnings, saveAuth, soonestExpiry, waitForEnter } from "./auth.js";
-import { allowedOrigins, launchBrowser, waitReady } from "./browser.js";
+import { AUTH_EXTRA_FILE, authWarnings, checkSignedIn, saveAuth, soonestExpiry, waitForEnter } from "./auth.js";
+import { allowedOrigins, launchBrowser } from "./browser.js";
 import { IGNORE_FILE, ignoredLine } from "./noise.js";
 import { AUTH_FILE, defaultStorageState, newRunDir, runVerify, type VerifyOptions } from "./verify.js";
 import { SECRETS_FILE } from "./secrets.js";
-import { MAP_FILE, buildMap, checkMap, hasDrift, readMap, writeMap } from "./map.js";
+import { MAP_FILE, buildMap, checkMap, defaultCodeDir, hasDrift, readMap, writeMap } from "./map.js";
+import { scanCode, scanSummary, seedPaths } from "./code.js";
 
 const HELP = `witness: agents don't get to say "it works" without a witness.
 
@@ -31,6 +32,8 @@ Usage:
   witness export [name...] [--dir d]  Write replays as plain Playwright tests.
   witness map [--check]               Crawl the app into a Feature Map (${MAP_FILE}),
                                       or report drift from the saved one (no LLM).
+  witness scan [dir] [--json]         What the source says the app has: routes, controls, endpoints,
+                                      status values. Local and instant, no browser and no LLM.
   witness auth "<login goal>"         Have the agent log in, and save the session to ${AUTH_FILE}.
                                       Later runs start signed in.
   witness auth --manual               Open a browser and sign in yourself (single sign-on, MFA),
@@ -56,6 +59,9 @@ Options:
   --heal              replay: when a replay diverges, re-verify with the agent.
                       Still passing: re-record the replay. Failing: report a regression.
   --dir <dir>         export: output folder (default: tests/witness)
+  --code <dir>        map: where the app's source is (default: the current folder, if it
+                      has a package.json and its routes match the app)
+  --no-code           map: don't read the source
   --no-map            verify: don't give the Driver the Feature Map
   --no-auth           Ignore the saved login in ${AUTH_FILE}
   --headed            Show the browser
@@ -148,7 +154,10 @@ async function replay(names: string[], values: Values) {
     const entry: (typeof results)[number] = { ...res };
     results.push(entry);
 
-    const warn = () => res.provenance?.warnings.forEach((w) => opts.log!(`    ⚠ ${w}`));
+    const warn = () => {
+      res.provenance?.warnings.forEach((w) => opts.log!(`    ⚠ ${w}`));
+      if (ignoredLine(res.ignoredErrors)) opts.log!(`    ${ignoredLine(res.ignoredErrors)}`);
+    };
     if (res.status === "match") {
       opts.log!(`✓ ${r.name}  ${res.steps} steps match  (${(res.durationMs / 1000).toFixed(1)}s, no LLM)`);
       warn();
@@ -213,7 +222,8 @@ async function map(values: Values) {
   if (values.check) {
     const saved = await readMap();
     if (!saved) throw new Error(`No ${MAP_FILE} yet. Create one with: witness map`);
-    const d = await checkMap(saved.map, opts.url, runDir, opts.storageState);
+    const codeDir = values.code ? String(values.code) : undefined;
+    const d = await checkMap(saved.map, opts.url, runDir, opts.storageState, codeDir);
     if (!hasDrift(d)) {
       console.log(`✓ ${MAP_FILE} matches the app (${saved.map.pages.length} pages, ${saved.map.features.length} features)`);
       return 0;
@@ -225,6 +235,8 @@ async function map(values: Values) {
       for (const a of c.added) console.log(`  + ${c.path}: ${a}`);
       for (const r of c.removed) console.log(`  - ${c.path}: ${r}`);
     }
+    for (const r of d.addedRoutes) console.log(`  + new route in the code: ${r}`);
+    for (const r of d.removedRoutes) console.log(`  - route gone from the code: ${r}`);
     for (const f of d.staleFeatures) console.log(`  ! feature "${f.name}" relies on missing ${f.missing.join(", ")}`);
     console.log(`\nRegenerate with: witness map`);
     return 1;
@@ -232,10 +244,32 @@ async function map(values: Values) {
   console.error(`witness map › ${opts.url}`);
   const m = await buildMap({
     url: opts.url, backend: opts.backend, workDir: runDir, runsDir: opts.outDir, storageState: opts.storageState, log: opts.log!,
+    codeDir: values["no-code"] ? undefined : values.code ? String(values.code) : defaultCodeDir(), codeGiven: Boolean(values.code),
   });
   await writeMap(m);
   console.log(`\nwrote ${MAP_FILE}: ${m.pages.length} page(s), ${m.features.length} feature(s)`);
   for (const f of m.features) console.log(`  • ${f.name}  (${f.page})${f.traps.length ? `  · ${f.traps.length} trap(s)` : ""}`);
+  if (m.code && m.scenarios) {
+    const seen = m.code.routes.filter((r) => r.trust === "seen in app").length;
+    console.log(`\nfrom the code: ${m.code.routes.length} routes (${seen} seen in the app, ${m.code.routes.length - seen} not)`);
+    for (const r of m.code.routes.filter((r) => r.note)) console.log(`  - ${r.path}: ${r.note}`);
+    console.log(`\n${m.scenarios.length} scenario(s) to try. None is proven until a run passes it:`);
+    for (const s of m.scenarios) console.log(`  • [${s.trust}] ${s.name}`);
+  }
+  return 0;
+}
+
+function scan(dir: string, values: Values) {
+  const s = scanCode(dir);
+  if (values.json) {
+    console.log(JSON.stringify(s, null, 2));
+    return 0;
+  }
+  console.log(scanSummary(s));
+  for (const r of s.routes) console.log(`  ${r.path}${r.partial ? "  (parent path unknown)" : ""}  ${r.file}:${r.line}`);
+  const { skipped } = seedPaths(s);
+  if (skipped.length) console.log(`map won't open: ${skipped.join(", ")} (the names suggest they sign out or change data)`);
+  console.log(`\nThis is what the code says, not what the app does. Full details: witness scan --json`);
   return 0;
 }
 
@@ -268,7 +302,7 @@ async function manualAuth(values: Values) {
     // sessionStorage isn't part of Playwright's storage state; take it from the app's open tabs.
     let saved: Record<string, string> = {};
     for (const p of context.pages()) {
-      if (!p.url().startsWith(appOrigin)) continue;
+      if (!p.url().startsWith(`${appOrigin}/`)) continue;
       const items = await p.evaluate(() => Object.fromEntries(Object.entries(window.sessionStorage))).catch(() => ({}));
       saved = { ...saved, ...items };
     }
@@ -276,20 +310,14 @@ async function manualAuth(values: Values) {
     const extra = { savedAt: new Date().toISOString(), appOrigin, signInOrigins: [...origins].sort(), sessionStorage: saved };
 
     // Check it the way a run will use it: a fresh context with the saved state.
-    const check = await browser.newContext({ storageState: state });
-    if (Object.keys(saved).length) {
-      await check.addInitScript(({ origin, items }) => {
-        if (location.origin === origin && !sessionStorage.length) for (const [k, v] of Object.entries(items)) sessionStorage.setItem(k, v);
-      }, { origin: appOrigin, items: saved });
-    }
-    const probe = await check.newPage();
-    await probe.goto(opts.url).catch(() => {});
-    await waitReady(probe);
-    const landed = probe.url();
-    if (!landed.startsWith(appOrigin)) {
-      console.log(`\nOpening the app with this session went to ${new URL(landed).origin}, probably a sign-in page, so nothing was saved.`);
-      console.log(`Finish signing in (until the app itself shows), then run witness auth --manual again.`);
-      return 1;
+    const doubt = await checkSignedIn(browser, opts.url, state, extra);
+    if (doubt) {
+      console.log(`\nThis doesn't look signed in: ${doubt.why}.`);
+      const keep = doubt.problem === "doubtful" && /^y(es)?$/i.test((await waitForEnter("Save it anyway? y/N ", closed)).trim());
+      if (!keep) {
+        console.log("Nothing was saved. Finish signing in (until the app itself shows), then run witness auth --manual again.");
+        return 1;
+      }
     }
 
     await saveAuth(state, extra);
@@ -300,7 +328,7 @@ async function manualAuth(values: Values) {
     const extraAllowed = extra.signInOrigins.filter((o) => !allowedOrigins(opts.url).has(o));
     if (extraAllowed.length) {
       console.log(`Runs with this login may also load pages from the sign-in site(s) you went through: ${extraAllowed.join(", ")}.`);
-      console.log(`Secrets are still only typed on the app's own origin.`);
+      console.log(`Secrets are never typed there, unless you list the site in WITNESS_ALLOWED_ORIGINS.`);
     }
     console.log(`These files hold session tokens: keep them out of git. .witness/ is ignored by default.`);
     return 0;
@@ -341,6 +369,8 @@ async function main() {
       check: { type: "boolean" },
       headed: { type: "boolean" },
       channel: { type: "string" },
+      code: { type: "string" },
+      "no-code": { type: "boolean" },
       manual: { type: "boolean" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -355,6 +385,7 @@ async function main() {
   if (command === "replay") return replay(rest, values);
   if (command === "export") return exportSpecs(rest, values);
   if (command === "map") return map(values);
+  if (command === "scan") return scan(rest[0] ?? ".", values);
   if (command === "auth" && values.manual) return manualAuth(values);
   if (command === "auth" && rest.length) return auth(rest.join(" "), values);
   if (command === "mcp") {
@@ -367,7 +398,8 @@ async function main() {
 }
 
 main().then(
-  (code) => process.exit(code),
+  // Flush first: exiting right away cuts off long output to a pipe.
+  (code) => process.stdout.write("", () => process.exit(code)),
   (err) => {
     console.error(`witness: ${err instanceof Error ? err.message : err}`);
     process.exit(3);
