@@ -137,7 +137,7 @@ Witness starts every run in a fresh browser. A tab you already had open, or a se
 
 ## Replay: verify once with an agent, re-check for free
 
-A passing `verify` is saved as a **replay**: the exact steps, plus the accessibility tree expected after each one. Replays run with no LLM, in about a second.
+A passing `verify` is saved as a **replay**: the exact steps, plus the accessibility tree expected after each one. Replays run with no LLM, in about 2 seconds on the demo app.
 
 ```bash
 witness replay            # all saved replays, deterministic, no model calls
@@ -232,27 +232,28 @@ That is 14 cases. The eval reports:
 
 Results go to `.witness/evals/<id>/summary.md` and `results.json`, with a link to every run's evidence report.
 
-### Latest results ([3 trials, 2026-11-23](docs/eval/2026-11-23-trials3.md) · [previous](docs/eval/2026-11-22-trials3.md))
+### Latest results ([3 trials, 2026-11-25](docs/eval/2026-11-25-trials3.md) · earlier: [11-23](docs/eval/2026-11-23-trials3.md), [11-22](docs/eval/2026-11-22-trials3.md))
 
 | Metric | Result |
 |---|---|
 | Bug catch rate | **24/24 (100%)** |
 | False alarm rate | **0/18 (0%)**, including a harmless UI change |
 | Same verdict on all 3 trials | **14/14 cases** |
-| No-LLM replay catch rate | **8/8 (100%)**, mean 1.4s per replay |
-| Agent run | mean 38s, 15.4 browser actions |
+| No-LLM replay catch rate | **8/8 (100%)**, mean 2.0s per replay |
+| Agent run | mean 41s, 15.4 browser actions |
 
-These came from the `claude-code` backend (Claude Opus 5.5 on a Claude subscription), 3 trials per case, 42 agent runs, on the current Driver and Judge.
+These came from commit `e51b093` with the `claude-code` backend on Claude Code's default model, 3 trials per case, 42 agent runs. The verdicts match the previous eval. Replays got slower (2.0s, up from 1.4s), because Witness now waits for the network to go quiet after each page load.
 
-**The eval caught a flaky rule in the Judge.** The first re-run after the real-app fixes scored 21/24. The Judge saw an uncaught error on every Add click and said it should be fixed, but judged the goal a pass anyway, 3 times out of 3. The previous eval had failed the same runs. The Judge's instructions never said whether errors fail a goal, so the verdict depended on interpretation. Now they do, and the full re-run is back to 24/24 (one goal was re-run separately after hitting the usage limit). [Details](docs/eval/2026-11-23-trials3.md#what-this-re-run-found).
+**An earlier eval caught a flaky rule in the Judge.** The first re-run after the real-app fixes scored 21/24. The Judge saw an uncaught error on every Add click and said it should be fixed, but judged the goal a pass anyway, 3 times out of 3. The previous eval had failed the same runs. The Judge's instructions never said whether errors fail a goal, so the verdict depended on interpretation. Now they do, and it has scored 24/24 in both evals since. [Details](docs/eval/2026-11-23-trials3.md#what-this-re-run-found).
 
 Every FAIL verdict named the actual bug, citing specific steps. Examples:
-- *"clicking Delete 'Bravo' removed Charlie and left Bravo"*
-- *"the counter is always one too high"*
-- *"clicking Add threw an uncaught error … so the flow did not run cleanly"*, where the UI itself looked fine
+- *"clicking Delete on Bravo removed Charlie, and clicking Delete on Alpha removed Bravo"*
+- *"the 'items left' counter is always exactly one too high"*
+- *"every Add click throws an uncaught error"*, where the UI itself looked fine
 
 **Caveats:**
 - The demo bugs are deliberately clear-cut, and the same author wrote both the bugs and the goals.
+- The eval runs the Driver without a Feature Map, so it doesn't show whether the map or its scenarios help.
 - The next step is seeded bugs in a real app, plus subtler bugs such as race conditions and visual-only regressions.
 
 ## Why
